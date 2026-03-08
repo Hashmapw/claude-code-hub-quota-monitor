@@ -1,0 +1,12 @@
+.next
+node_modules
+*.log
+.env
+.sqlite
+.env.local
+dist
+
+references/
+data/
+**/data/
+**/data/*

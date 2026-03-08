@@ -1,0 +1,30 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:22-bookworm-slim}
+    image: ${IMAGE_NAME:-ghcr.io/hashmapw/claude-code-hub-quota-monitor}:${IMAGE_TAG:-latest}
+    container_name: ${CONTAINER_NAME:-claude-code-hub-quota-monitor}
+    restart: unless-stopped
+    ports:
+      - "${HOST_BIND_IP:-127.0.0.1}:${HOST_PORT:-23010}:${CONTAINER_PORT:-3010}"
+    environment:
+      PORT: ${CONTAINER_PORT:-3010}
+      MONITOR_DSN: ${MONITOR_DSN:?MONITOR_DSN is required}
+      MONITOR_ADMIN_PASSWORD: ${MONITOR_ADMIN_PASSWORD:?MONITOR_ADMIN_PASSWORD is required}
+      MONITOR_PROVIDER_SCHEMA: ${MONITOR_PROVIDER_SCHEMA:-public}
+      MONITOR_PROVIDER_TABLE: ${MONITOR_PROVIDER_TABLE:-providers}
+      MONITOR_CACHE_TTL_MS: ${MONITOR_CACHE_TTL_MS:-60000}
+      MONITOR_RESULT_CACHE_TTL_SEC: ${MONITOR_RESULT_CACHE_TTL_SEC:-604800}
+      MONITOR_REDIS_URL: ${MONITOR_REDIS_URL:-}
+      MONITOR_REDIS_TLS_REJECT_UNAUTHORIZED: ${MONITOR_REDIS_TLS_REJECT_UNAUTHORIZED:-true}
+      MONITOR_PROXY_URL: ${MONITOR_PROXY_URL:-}
+      MONITOR_LOG_LEVEL: ${MONITOR_LOG_LEVEL:-info}
+      MONITOR_DEBUG_HTTP: ${MONITOR_DEBUG_HTTP:-false}
+    volumes:
+      - ${DATA_SOURCE:-app-data}:/app/data
+
+volumes:
+  app-data:

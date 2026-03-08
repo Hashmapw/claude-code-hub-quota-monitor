@@ -1,0 +1,281 @@
+@import "tailwindcss";
+@source "../**/*.{js,jsx,ts,tsx,mdx}";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  --radius: 0.65rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.141 0.005 285.823);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.141 0.005 285.823);
+  --primary: oklch(0.705 0.213 47.604);
+  --primary-foreground: oklch(0.98 0.016 73.684);
+  --secondary: oklch(0.967 0.001 286.375);
+  --secondary-foreground: oklch(0.21 0.006 285.885);
+  --muted: oklch(0.967 0.001 286.375);
+  --muted-foreground: oklch(0.552 0.016 285.938);
+  --accent: oklch(0.967 0.001 286.375);
+  --accent-foreground: oklch(0.21 0.006 285.885);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.92 0.004 286.32);
+  --input: oklch(0.92 0.004 286.32);
+  --ring: oklch(0.705 0.213 47.604);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.141 0.005 285.823);
+}
+
+.dark {
+  --background: oklch(0.141 0.005 285.823);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.21 0.006 285.885);
+  --card-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.646 0.222 41.116);
+  --primary-foreground: oklch(0.98 0.016 73.684);
+  --secondary: oklch(0.274 0.006 286.033);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.274 0.006 286.033);
+  --muted-foreground: oklch(0.705 0.015 286.067);
+  --accent: oklch(0.274 0.006 286.033);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.646 0.222 41.116);
+  --popover: oklch(0.21 0.006 285.885);
+  --popover-foreground: oklch(0.985 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    height: 100%;
+    scrollbar-gutter: stable;
+  }
+  body {
+    @apply bg-background text-foreground;
+    min-height: 100%;
+    overflow-y: scroll !important;
+  }
+  /* react-remove-scroll-bar sets body[data-scroll-locked]{margin-right/padding-right: <scrollbarWidth>}
+     which can cause horizontal layout "jitter" for centered layouts when overlays/selects open.
+     Keep scroll locking behavior, but remove the horizontal compensation. */
+  html body[data-scroll-locked] {
+    margin-right: 0 !important;
+    padding-right: 0 !important;
+  }
+}
+
+@theme inline {
+  --animate-in: enter;
+  --animate-out: exit;
+
+  @keyframes enter {
+    from {
+      opacity: var(--tw-enter-opacity, 1);
+      transform:
+        scale3d(var(--tw-enter-scale, 1), var(--tw-enter-scale, 1), var(--tw-enter-scale, 1))
+        rotate(var(--tw-enter-rotate, 0));
+    }
+  }
+
+  @keyframes exit {
+    to {
+      opacity: var(--tw-exit-opacity, 1);
+      transform:
+        scale3d(var(--tw-exit-scale, 1), var(--tw-exit-scale, 1), var(--tw-exit-scale, 1))
+        rotate(var(--tw-exit-rotate, 0));
+    }
+  }
+}
+
+@utility animate-in {
+  animation-name: enter;
+  animation-duration: 150ms;
+  --tw-enter-opacity: initial;
+  --tw-enter-scale: initial;
+  --tw-enter-rotate: initial;
+  --tw-enter-translate-x: initial;
+  --tw-enter-translate-y: initial;
+}
+
+@utility animate-out {
+  animation-name: exit;
+  animation-duration: 150ms;
+  --tw-exit-opacity: initial;
+  --tw-exit-scale: initial;
+  --tw-exit-rotate: initial;
+  --tw-exit-translate-x: initial;
+  --tw-exit-translate-y: initial;
+}
+
+@utility fade-in-0 {
+  --tw-enter-opacity: 0;
+}
+
+@utility fade-out-0 {
+  --tw-exit-opacity: 0;
+}
+
+@utility zoom-in-95 {
+  --tw-enter-scale: .95;
+}
+
+@utility zoom-out-95 {
+  --tw-exit-scale: .95;
+}
+
+@utility slide-in-from-top-1 {
+  --tw-enter-translate-y: -0.25rem;
+}
+
+@utility slide-in-from-top-2 {
+  --tw-enter-translate-y: -0.5rem;
+}
+
+@utility slide-in-from-bottom-1 {
+  --tw-enter-translate-y: 0.25rem;
+}
+
+@utility slide-in-from-bottom-2 {
+  --tw-enter-translate-y: 0.5rem;
+}
+
+@utility slide-in-from-left-2 {
+  --tw-enter-translate-x: -0.5rem;
+}
+
+@utility slide-in-from-right-2 {
+  --tw-enter-translate-x: 0.5rem;
+}
+
+@utility slide-in-from-right-full {
+  --tw-enter-translate-x: 100%;
+}
+
+/* Monaco Editor Custom Styling */
+.monaco-editor .suggest-widget {
+  border-radius: 12px !important;
+  border: 1px solid oklch(0.92 0.004 286.32) !important;
+  box-shadow: 0 10px 25px -5px rgba(0,0,0,0.15), 0 8px 10px -6px rgba(0,0,0,0.1) !important;
+  padding: 4px !important;
+  overflow: hidden !important;
+  max-height: 240px !important; /* Constrain max height so it doesn't hit boundaries */
+}
+
+.dark .monaco-editor .suggest-widget {
+  border: 1px solid oklch(1 0 0 / 15%) !important;
+  box-shadow: 0 10px 25px -5px rgba(0,0,0,0.5), 0 8px 10px -6px rgba(0,0,0,0.5) !important;
+}
+
+.monaco-editor .suggest-widget .monaco-list .monaco-list-row {
+  border-radius: 6px !important;
+}
+
+/* JS adds .force-below; keep widget visual style stable when it is pinned below cursor. */
+.monaco-editor .suggest-widget.force-below {
+  margin-top: 4px !important;
+  transform: none !important;
+}
+
+.monaco-editor .suggest-widget.force-below.above {
+  transform: none !important;
+}
+
+/* Login brand panel gradients — use !important to win over Tailwind layers */
+.login-brand-bg {
+  background: linear-gradient(to right, #f0f7ff, #f5f9ff, #fafcff, #ffffff) !important;
+}
+.dark .login-brand-bg {
+  background: linear-gradient(to right, #0c1929, #111d2e, #151f2d, var(--background)) !important;
+}
+.login-brand-overlay {
+  background:
+    radial-gradient(circle at 15% 30%, rgba(59,130,246,0.12), transparent 40%),
+    radial-gradient(circle at 60% 75%, rgba(14,165,233,0.08), transparent 45%) !important;
+}
+
+.monitor-login-submit {
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  background: #2563eb;
+  color: #ffffff;
+  box-shadow: 0 18px 40px -22px rgba(37, 99, 235, 0.85);
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.monitor-login-submit:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.monitor-login-submit:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 3px rgba(59, 130, 246, 0.22),
+    0 18px 40px -22px rgba(37, 99, 235, 0.85);
+}
+
+.monitor-login-submit:disabled {
+  cursor: not-allowed;
+  border-color: rgba(59, 130, 246, 0.2);
+  background: rgba(37, 99, 235, 0.55);
+  color: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 10px 26px -22px rgba(37, 99, 235, 0.65);
+}
+
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+  display: none;
+}
+
+input[type="password"]::-webkit-credentials-auto-fill-button,
+input[type="password"]::-webkit-contacts-auto-fill-button {
+  display: none !important;
+  visibility: hidden;
+  pointer-events: none;
+}
+.dark .login-brand-overlay {
+  background:
+    radial-gradient(circle at 15% 30%, rgba(96,165,250,0.20), transparent 42%),
+    radial-gradient(circle at 60% 75%, rgba(56,189,248,0.14), transparent 48%) !important;
+}
+.login-page-bg-orbs {
+  background:
+    radial-gradient(circle at 100% 0%, rgba(59,130,246,0.14), transparent 28%),
+    radial-gradient(circle at 0% 100%, rgba(14,165,233,0.12), transparent 24%) !important;
+}
+.dark .login-page-bg-orbs {
+  background:
+    radial-gradient(circle at 100% 0%, rgba(59,130,246,0.20), transparent 30%),
+    radial-gradient(circle at 0% 100%, rgba(14,165,233,0.18), transparent 26%) !important;
+}
