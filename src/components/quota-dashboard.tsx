@@ -2765,6 +2765,27 @@ export function QuotaDashboard({
   }, []);
 
   useEffect(() => {
+    if (refreshingAll || savingSetting || savingVendorSetting) {
+      return;
+    }
+    if (editingRecord || detailDrawerOpen || editingVendorId !== null || creatingNewVendor) {
+      return;
+    }
+    void reloadDashboardData().catch(() => {
+      // Keep silent on first-load retry; regular polling continues in background.
+    });
+  }, [
+    creatingNewVendor,
+    detailDrawerOpen,
+    editingRecord,
+    editingVendorId,
+    refreshingAll,
+    reloadDashboardData,
+    savingSetting,
+    savingVendorSetting,
+  ]);
+
+  useEffect(() => {
     const timer = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
         return;

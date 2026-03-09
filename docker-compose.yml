@@ -34,3 +34,6 @@ networks:
   claude-code-hub-net:
     external: true
     name: ${HUB_EXTERNAL_NETWORK:-claude-code-hub-net-3gct}
+
+volumes:
+  app-data:
