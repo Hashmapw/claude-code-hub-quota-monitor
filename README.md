@@ -14,23 +14,24 @@
 
 ## 📖 目录
 
-- 💡 [30 秒看懂](#-30-秒看懂)
-- ✨ [功能清单](#-功能清单)
-- 🖼️ [界面预览](#-界面预览)
-- ⚡ [快速开始](#-快速开始)
-- 📋 [第一次配置](#-第一次配置按顺序做)
-- 🧩 [类型定义](#-类型定义)
-- 🔄 [自动恢复机制](#-自动恢复机制)
-- ⚙️ [环境变量](#-环境变量)
-- 🐳 [Docker 多平台构建](#-docker-多平台构建)
-- ❓ [常见问题](#-常见问题)
-- 🛠️ [二次开发](#-二次开发)
-- 🏗️ [技术栈](#-技术栈)
-- 📊 [核心数据流](#-核心数据流)
-- 📁 [目录结构](#-目录结构)
+- 💡 [30 秒看懂](#overview-30s)
+- ✨ [功能清单](#features)
+- 🖼️ [界面预览](#ui-preview)
+- ⚡ [快速开始](#quick-start)
+- 📋 [第一次配置](#first-time-setup)
+- 🧩 [类型定义](#type-definitions)
+- 🔄 [自动恢复机制](#auto-recovery)
+- ⚙️ [环境变量](#environment-variables)
+- 🐳 [Docker 多平台构建](#docker-multi-arch-build)
+- ❓ [常见问题](#faq)
+- 🛠️ [二次开发](#development)
+- 🏗️ [技术栈](#tech-stack)
+- 📊 [核心数据流](#core-data-flow)
+- 📁 [目录结构](#project-structure)
 
 ---
 
+<a id="overview-30s"></a>
 ## 💡 30 秒看懂
 
 | 职责 | 项目 |
@@ -49,6 +50,7 @@
 
 ---
 
+<a id="features"></a>
 ## ✨ 功能清单
 
 - **控制台**：端点余额总览、按服务商分组、搜索过滤、一键刷新
@@ -63,6 +65,7 @@
 
 ---
 
+<a id="ui-preview"></a>
 ## 🖼️ 界面预览
 
 | 功能 | 浅色 | 深色 |
@@ -76,6 +79,7 @@
 
 ---
 
+<a id="quick-start"></a>
 ## ⚡ 快速开始
 
 ### 方式一：Docker Compose（推荐）
@@ -92,19 +96,25 @@ cp .env.example .env
 
 ```bash
 # 必填：连接 claude-code-hub 的 PostgreSQL
-MONITOR_DSN=postgresql://user:password@host:5432/claude_code_hub
+MONITOR_DSN=postgresql://postgres:your-password@claude-code-hub-db-3gct:5432/claude_code_hub
 
 # 必填：管理员登录密码（不支持 sk- 开头）
 MONITOR_ADMIN_PASSWORD=your-secure-password
 ```
 
+首次部署前，先确保外部网络存在（与你的 hub 保持一致）：
+
+```bash
+docker network create claude-code-hub-net-3gct
+```
+
 **2) 启动**
 
 ```bash
-docker compose --env-file .env up -d
+docker compose -f docker-compose.yml --env-file .env up -d
 ```
 
-> 默认拉取 ghcr.io 上的预构建镜像。如需从源码构建，先安装 Node.js 22+ 并执行 `npm install && npm run build`，再运行 `docker compose --env-file .env up -d --build`。
+> 默认拉取 ghcr.io 上的预构建镜像。如需从源码构建，先安装 Node.js 22+ 并执行 `npm install && npm run build`，再运行 `docker compose -f docker-compose.yml --env-file .env up -d --build`。
 
 **3) 访问**
 
@@ -126,7 +136,7 @@ CONTAINER_PORT=3010        # 容器端口，默认 3010
 <details>
 <summary>使用主机目录挂载数据</summary>
 
-默认使用 Docker named volume（`app-data`）。如需改为主机目录：
+默认使用仓库内 `./data` 目录。也可改为绝对路径：
 
 ```bash
 # .env
@@ -174,6 +184,7 @@ npm run dev
 
 ---
 
+<a id="first-time-setup"></a>
 ## 📋 第一次配置（按顺序做）
 
 1. **确认数据库连通**：启动后首页能看到端点列表（状态为"未检查"是正常的）
@@ -185,6 +196,7 @@ npm run dev
 
 ---
 
+<a id="type-definitions"></a>
 ## 🧩 类型定义
 
 在 **类型管理** 页面导入对应 JSON 即可使用。如果你的站点不在列表中，参考[适配新站点](#适配新站点)章节自行创建。
@@ -1027,6 +1039,7 @@ npm run dev
 
 ---
 
+<a id="auto-recovery"></a>
 ## 🔄 自动恢复机制
 
 ### 401：Token 过期自动刷新
@@ -1047,6 +1060,7 @@ npm run dev
 
 ---
 
+<a id="environment-variables"></a>
 ## ⚙️ 环境变量
 
 部署时只需关注以下两个必填项，其余均有合理默认值：
@@ -1072,6 +1086,16 @@ npm run dev
 | `MONITOR_DEBUG_HTTP` | `false` | 启用 HTTP 请求调试日志 |
 | `PORT` | `3010` | 服务端口 |
 
+Docker 部署常用变量：
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `HOST_BIND_IP` | `127.0.0.1` | 主机绑定地址 |
+| `HOST_PORT` | `23010` | 主机端口 |
+| `CONTAINER_PORT` | `3010` | 容器端口 |
+| `DATA_SOURCE` | `./data` | 数据目录挂载源 |
+| `HUB_EXTERNAL_NETWORK` | `claude-code-hub-net-3gct` | 外部网络名（需存在） |
+
 > 部分变量支持从已有环境自动回退：`MONITOR_DSN` 回退 `DSN` → `DATABASE_URL` → `../claude-code-hub/.env`；`MONITOR_REDIS_URL` 回退 `REDIS_URL`；`MONITOR_PROXY_URL` 回退 `MONITOR_HTTP_PROXY` → `HTTPS_PROXY` → `HTTP_PROXY` → `ALL_PROXY`。
 
 <details>
@@ -1088,6 +1112,7 @@ npm run dev
 
 ---
 
+<a id="docker-multi-arch-build"></a>
 ## 🐳 Docker 多平台构建
 
 如需构建 `linux/amd64` + `linux/arm64` 双平台镜像并推送：
@@ -1110,6 +1135,7 @@ docker buildx build \
 
 ---
 
+<a id="faq"></a>
 ## ❓ 常见问题
 
 ### 启动报"数据库连接串未配置"
@@ -1138,6 +1164,7 @@ docker buildx build \
 
 ---
 
+<a id="development"></a>
 ## 🛠️ 二次开发
 
 ```bash
@@ -1149,12 +1176,14 @@ npm run typecheck  # TypeScript 类型检查
 
 ---
 
+<a id="tech-stack"></a>
 ## 🏗️ 技术栈
 
 Next.js 16 / React 19 / TypeScript 5.9 / Tailwind 4 / PostgreSQL（读取 claude-code-hub 数据） / SQLite（本地配置） / Redis（可选缓存） / Monaco Editor / Recharts
 
 ---
 
+<a id="core-data-flow"></a>
 ## 📊 核心数据流
 
 ```
@@ -1169,6 +1198,7 @@ claude-code-hub PostgreSQL (providers)
 
 ---
 
+<a id="project-structure"></a>
 ## 📁 目录结构
 
 ```

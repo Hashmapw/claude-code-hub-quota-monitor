@@ -8,6 +8,10 @@ services:
     image: ${IMAGE_NAME:-ghcr.io/hashmapw/claude-code-hub-quota-monitor}:${IMAGE_TAG:-latest}
     container_name: ${CONTAINER_NAME:-claude-code-hub-quota-monitor}
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - claude-code-hub-net
     ports:
       - "${HOST_BIND_IP:-127.0.0.1}:${HOST_PORT:-23010}:${CONTAINER_PORT:-3010}"
     environment:
@@ -24,7 +28,12 @@ services:
       MONITOR_LOG_LEVEL: ${MONITOR_LOG_LEVEL:-info}
       MONITOR_DEBUG_HTTP: ${MONITOR_DEBUG_HTTP:-false}
     volumes:
-      - ${DATA_SOURCE:-app-data}:/app/data
+      - ${DATA_SOURCE:-./data}:/app/data
+
+networks:
+  claude-code-hub-net:
+    external: true
+    name: ${HUB_EXTERNAL_NETWORK:-claude-code-hub-net-3gct}
 
 volumes:
   app-data:
