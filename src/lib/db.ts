@@ -12,6 +12,19 @@ export type DbEndpointRow = {
   isEnabled: boolean;
 };
 
+export type EndpointSourceStatus = {
+  schema: string;
+  table: string;
+  rawRecordCount: number;
+  readableRecordCount: number;
+  tableCount: number;
+  tables: Array<{
+    name: string;
+    rowCount: number;
+    readableRecordCount: number;
+  }>;
+};
+
 let sqlClient: postgres.Sql | null = null;
 
 function normalizeIdentifier(value: string, fallback: string): string {
@@ -233,6 +246,29 @@ export async function listEndpoints(): Promise<DbEndpointRow[]> {
   const rows = await sql().unsafe(`select * from "${schema}"."${table}" order by id asc`);
 
   return buildFromRows(rows as Array<Record<string, unknown>>);
+}
+
+export async function getEndpointSourceStatus(): Promise<EndpointSourceStatus> {
+  const config = getConfig();
+  const schema = normalizeIdentifier(config.schema, 'public');
+  const table = normalizeIdentifier(config.table, 'providers');
+  const rows = await sql().unsafe(`select * from "${schema}"."${table}" order by id asc`);
+  const normalizedRows = buildFromRows(rows as Array<Record<string, unknown>>);
+
+  return {
+    schema,
+    table,
+    rawRecordCount: rows.length,
+    readableRecordCount: normalizedRows.length,
+    tableCount: 1,
+    tables: [
+      {
+        name: `${schema}.${table}`,
+        rowCount: rows.length,
+        readableRecordCount: normalizedRows.length,
+      },
+    ],
+  };
 }
 
 export async function getEndpointById(endpointId: number): Promise<DbEndpointRow | null> {

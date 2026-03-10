@@ -3,6 +3,7 @@ import 'server-only';
 import Redis from 'ioredis';
 import { getConfig } from '@/lib/config';
 import type { QuotaResult } from '@/lib/quota/types';
+import { markRedisCacheUpdated } from '@/lib/redis-cache-meta';
 
 const memoryStore = new Map<number, QuotaResult>();
 let redisClient: Redis | null = null;
@@ -156,6 +157,7 @@ export async function setCachedResult(endpointId: number, result: QuotaResult): 
 
   const redisSaved = await withRedis(async (redis) => {
     await redis.set(keyFor(endpointId), serialized, 'EX', ttl);
+    await markRedisCacheUpdated(redis).catch(() => {});
     return true;
   });
 

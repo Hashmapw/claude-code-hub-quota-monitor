@@ -3,6 +3,7 @@ import 'server-only';
 import Redis from 'ioredis';
 import { getConfig } from '@/lib/config';
 import type { QuotaDebugSnapshot } from '@/lib/quota/types';
+import { markRedisCacheUpdated } from '@/lib/redis-cache-meta';
 
 const memoryStore = new Map<number, QuotaDebugSnapshot>();
 let redisClient: Redis | null = null;
@@ -35,10 +36,20 @@ function getRedisClient(): Redis | null {
   }
 
   try {
+    const redisUrlLower = redisUrl.toLowerCase();
+    const useTls = redisUrlLower.startsWith('rediss://');
+
     redisClient = new Redis(redisUrl, {
       enableOfflineQueue: false,
       maxRetriesPerRequest: 1,
       lazyConnect: true,
+      ...(useTls
+        ? {
+            tls: {
+              rejectUnauthorized: getConfig().redisTlsRejectUnauthorized,
+            },
+          }
+        : {}),
       retryStrategy(times) {
         if (times > 3) {
           return null;
@@ -120,6 +131,7 @@ export async function setCachedDebugSnapshot(snapshot: QuotaDebugSnapshot): Prom
 
   const redisSaved = await withRedis(async (redis) => {
     await redis.set(keyFor(snapshot.endpointId), serialized, 'EX', ttl);
+    await markRedisCacheUpdated(redis).catch(() => {});
     return true;
   });
 
