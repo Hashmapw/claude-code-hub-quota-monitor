@@ -88,7 +88,7 @@ function buildRedisClient(redisUrl: string): Redis {
   });
 }
 
-function getMonitorDatabaseStatus(): MonitorSqliteStatus {
+export function getMonitorDatabaseStatus(): MonitorSqliteStatus {
   const connection = getSqliteConnection();
   const dbPath = getDatabasePath();
   const tableRows = connection
@@ -119,7 +119,7 @@ function getMonitorDatabaseStatus(): MonitorSqliteStatus {
   };
 }
 
-async function getRedisStatus(): Promise<RedisStatus> {
+export async function getRedisStatus(): Promise<RedisStatus> {
   const redisUrl = getConfig().redisUrl;
   if (!redisUrl) {
     return {
@@ -162,19 +162,25 @@ async function getRedisStatus(): Promise<RedisStatus> {
   }
 }
 
-export async function getSystemStatusSnapshot(): Promise<SystemStatusSnapshot> {
-  const [hubSource, redis] = await Promise.all([
-    getEndpointSourceStatus(),
-    getRedisStatus(),
-  ]);
+export async function getHubSourceConnectionStatus(): Promise<HubSourceConnectionStatus> {
+  const hubSource = await getEndpointSourceStatus();
   const config = getConfig();
 
   return {
+    ...hubSource,
+    connectionDisplay: maskConnectionString(config.dsn),
+  };
+}
+
+export async function getSystemStatusSnapshot(): Promise<SystemStatusSnapshot> {
+  const [hubSource, redis] = await Promise.all([
+    getHubSourceConnectionStatus(),
+    getRedisStatus(),
+  ]);
+
+  return {
     generatedAt: new Date().toISOString(),
-    hubSource: {
-      ...hubSource,
-      connectionDisplay: maskConnectionString(config.dsn),
-    },
+    hubSource,
     monitorDatabase: getMonitorDatabaseStatus(),
     redis,
   };

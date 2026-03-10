@@ -3,13 +3,13 @@ export const dynamic = 'force-dynamic';
 import { VendorBalanceHistoryPage } from '@/components/vendor-balance-history-page';
 import { getVendorBalanceHistoryPayload } from '@/lib/vendor-balance-history';
 
-function buildInitialData() {
+async function buildInitialData() {
   return {
     ok: true as const,
-    ...getVendorBalanceHistoryPayload(),
+    ...(await getVendorBalanceHistoryPayload()),
   };
 }
 
-export default function VendorBalanceHistoryRoutePage() {
-  return <VendorBalanceHistoryPage initialData={buildInitialData()} />;
+export default async function VendorBalanceHistoryRoutePage() {
+  return <VendorBalanceHistoryPage initialData={await buildInitialData()} />;
 }

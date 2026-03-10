@@ -1,8 +1,14 @@
 import 'server-only';
 
+import { listHubDailyUsageStats, type HubDailyUsageStat } from '@/lib/db';
 import { getSqliteConnection } from '@/lib/sqlite-connection';
 import { getVendorDefinition } from '@/lib/vendor-definitions';
-import { listVendorOptions, type VendorOption, type VendorSetting } from '@/lib/vendor-settings';
+import {
+  getEndpointSettingsMap,
+  listVendorOptions,
+  type VendorOption,
+  type VendorSetting,
+} from '@/lib/vendor-settings';
 import type { QuotaRecord } from '@/lib/quota/types';
 
 export type VendorBalanceHistoryRange = '6h' | '24h' | '3d' | '7d' | '30d' | '90d' | 'all';
@@ -33,6 +39,7 @@ export type VendorBalanceHistoryPayload = {
   vendors: VendorOption[];
   points: VendorBalanceHistoryPoint[];
   latestPoint: VendorBalanceHistoryPoint | null;
+  hubDailyUsage: HubDailyUsageStat[];
 };
 
 export type VendorBalanceHistorySnapshotInput = {
@@ -418,10 +425,30 @@ export function listVendorBalanceHistoryVendors(): VendorOption[] {
   return listVendorOptions();
 }
 
-export function getVendorBalanceHistoryPayload(
+function listMappedEndpointIdsForVendor(vendorId: number): number[] {
+  const endpointSettings = getEndpointSettingsMap();
+  return Array.from(endpointSettings.values())
+    .filter((setting) => setting.vendorId === vendorId)
+    .map((setting) => setting.endpointId)
+    .filter((endpointId) => Number.isInteger(endpointId) && endpointId > 0);
+}
+
+export async function getVendorBalanceHistoryHubDailyUsage(
   preferredVendorId?: number | null,
   rangeInput?: string | null,
-): VendorBalanceHistoryPayload {
+): Promise<HubDailyUsageStat[]> {
+  const vendorId = resolveDefaultVendorBalanceHistoryVendorId(preferredVendorId);
+  if (!vendorId) {
+    return [];
+  }
+
+  return listHubDailyUsageStats(listMappedEndpointIdsForVendor(vendorId), rangeStartIso(normalizeRange(rangeInput)));
+}
+
+export async function getVendorBalanceHistoryPayload(
+  preferredVendorId?: number | null,
+  rangeInput?: string | null,
+): Promise<VendorBalanceHistoryPayload> {
   const vendors = listVendorBalanceHistoryVendors();
   const range = normalizeRange(rangeInput);
   const vendorId = resolveDefaultVendorBalanceHistoryVendorId(preferredVendorId);
@@ -439,5 +466,6 @@ export function getVendorBalanceHistoryPayload(
     vendors,
     points,
     latestPoint,
+    hubDailyUsage: [],
   };
 }
