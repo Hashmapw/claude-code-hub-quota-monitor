@@ -1,6 +1,6 @@
 'use client';
 
-import { Clock3, GripVertical, Loader2, Lock, Plus, Save, Settings2, Trash2, X } from 'lucide-react';
+import { Activity, Clock3, Database, GripVertical, Loader2, Lock, Plus, RefreshCw, Save, Server, Settings2, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
@@ -11,7 +11,7 @@ import { withBasePath } from '@/lib/client/base-path';
 import { toast } from '@/lib/toast';
 import { cn, formatDateTime } from '@/lib/utils';
 
-type SettingsPanel = 'config' | 'endpoint' | 'schedule';
+type SettingsPanel = 'config' | 'endpoint' | 'schedule' | 'status';
 type IntervalUnit = 'minutes' | 'hours' | 'days';
 type DropPosition = 'before' | 'after';
 type DropTarget = {
@@ -66,8 +66,49 @@ type VendorsApiResponse = {
   vendors?: VendorOption[];
 };
 
+type SystemStatusSnapshot = {
+  generatedAt: string;
+  hubSource: {
+    connectionDisplay: string;
+    schema: string;
+    table: string;
+    rawRecordCount: number;
+    readableRecordCount: number;
+    tableCount: number;
+    tables: Array<{
+      name: string;
+      rowCount: number;
+      readableRecordCount: number;
+    }>;
+  };
+  monitorDatabase: {
+    path: string;
+    tableCount: number;
+    tables: Array<{
+      name: string;
+      rowCount: number;
+    }>;
+  };
+  redis: {
+    enabled: boolean;
+    connected: boolean;
+    lastUpdatedAt: string | null;
+    errorMessage: string | null;
+    connectionDisplay: string | null;
+  };
+};
+
+type SystemStatusApiResponse = {
+  ok: boolean;
+  message?: string;
+  status?: SystemStatusSnapshot;
+};
+
 function parseSettingsPanel(raw: string | null | undefined): SettingsPanel {
   const normalized = (raw || '').trim().toLowerCase();
+  if (normalized === 'status') {
+    return 'status';
+  }
   if (normalized === 'schedule') {
     return 'schedule';
   }
@@ -127,6 +168,13 @@ function normalizeVendorTypeLabel(vendorType: string | null | undefined): string
   }
   return value;
 }
+
+function formatRecordCount(value: number): string {
+  return value.toLocaleString('zh-CN');
+}
+
+const SYSTEM_STATUS_BADGE_BASE_CLASS =
+  'inline-flex h-6 items-center justify-center rounded-full border px-2.5 text-[10px] font-bold leading-none tracking-widest whitespace-nowrap';
 
 function applyVendorMoveOrder(
   current: VendorOption[],
@@ -200,7 +248,7 @@ function PanelHeader({
   title,
   description,
 }: {
-  icon: 'settings' | 'schedule';
+  icon: 'settings' | 'schedule' | 'status';
   title: string;
   description: string;
 }) {
@@ -210,7 +258,9 @@ function PanelHeader({
         <div className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-primary/20 bg-primary/10 sm:flex">
           {icon === 'settings'
             ? <Settings2 className="h-6 w-6 text-primary" />
-            : <Clock3 className="h-6 w-6 text-primary" />}
+            : icon === 'schedule'
+              ? <Clock3 className="h-6 w-6 text-primary" />
+              : <Activity className="h-6 w-6 text-primary" />}
         </div>
         <div>
           <h2 className="text-xl font-bold tracking-tight text-foreground md:text-2xl">{title}</h2>
@@ -256,6 +306,9 @@ export function SystemSettingsPage({
   const [draggingVendorId, setDraggingVendorId] = useState<number | null>(null);
   const [dragOverVendorId, setDragOverVendorId] = useState<number | null>(null);
   const [dragOverPosition, setDragOverPosition] = useState<DropPosition | null>(null);
+  const [systemStatus, setSystemStatus] = useState<SystemStatusSnapshot | null>(null);
+  const [systemStatusLoading, setSystemStatusLoading] = useState(false);
+  const [systemStatusError, setSystemStatusError] = useState<string | null>(null);
   const draggingVendorIdRef = useRef<number | null>(null);
   const vendorRowRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const dragPreviewRef = useRef<{ vendorId: number | null; position: DropPosition | null }>({
@@ -486,6 +539,27 @@ export function SystemSettingsPage({
     }
   };
 
+  const loadSystemStatus = useCallback(async (showToastOnError = false) => {
+    setSystemStatusLoading(true);
+    setSystemStatusError(null);
+    try {
+      const response = await fetch(withBasePath('/api/system-settings/status'), { cache: 'no-store' });
+      const body = (await response.json().catch(() => ({}))) as SystemStatusApiResponse;
+      if (!response.ok || !body.ok || !body.status) {
+        throw new Error(body.message || '读取系统状态失败');
+      }
+      setSystemStatus(body.status);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setSystemStatusError(message);
+      if (showToastOnError) {
+        toast.error('读取系统状态失败', message);
+      }
+    } finally {
+      setSystemStatusLoading(false);
+    }
+  }, []);
+
   function moveVendor(movingId: number, targetId: number, dropPosition: DropPosition) {
     setVendorsForOrder((current) => applyVendorMoveOrder(current, movingId, targetId, dropPosition));
   }
@@ -536,6 +610,13 @@ export function SystemSettingsPage({
     }
     void loadVendorsForOrder();
   }, [activePanel, vendorOrderLoading, vendorsForOrder.length]);
+
+  useEffect(() => {
+    if (activePanel !== 'status' || systemStatusLoading || systemStatus || systemStatusError) {
+      return;
+    }
+    void loadSystemStatus();
+  }, [activePanel, loadSystemStatus, systemStatus, systemStatusError, systemStatusLoading]);
 
   const switchPanel = (nextPanel: SettingsPanel) => {
     setActivePanel(nextPanel);
@@ -794,6 +875,25 @@ export function SystemSettingsPage({
               <span className="flex-1 text-left">任务调度</span>
               {activePanel === 'schedule' && <div className="h-1.5 w-1.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.6)]" />}
             </button>
+            <button
+              type="button"
+              onClick={() => switchPanel('status')}
+              className={cn(
+                'relative flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-bold tracking-tight transition-all duration-300',
+                activePanel === 'status'
+                  ? 'bg-background text-foreground shadow-md ring-1 ring-border/60'
+                  : 'text-muted-foreground hover:bg-background/5 hover:text-foreground',
+              )}
+            >
+              <div className={cn(
+                'flex h-8 w-8 items-center justify-center rounded-lg shadow-sm transition-colors',
+                activePanel === 'status' ? 'bg-emerald-500 text-white' : 'bg-muted text-muted-foreground',
+              )}>
+                <Activity className="h-4 w-4" />
+              </div>
+              <span className="flex-1 text-left">系统状态</span>
+              {activePanel === 'status' && <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]" />}
+            </button>
           </nav>
           
           <div className="rounded-2xl border border-border/40 bg-muted/10 p-5 space-y-3">
@@ -826,11 +926,17 @@ export function SystemSettingsPage({
                   title="端点配置"
                   description="管理端点展示策略、页面刷新自动维护与手动系统清理。"
                 />
-              ) : (
+              ) : activePanel === 'schedule' ? (
                 <PanelHeader
                   icon="schedule"
                   title="任务调度"
                   description="集中管理自动刷新与定时任务，按预设规则由后端引擎精准触发。"
+                />
+              ) : (
+                <PanelHeader
+                  icon="status"
+                  title="系统状态"
+                  description="实时查看 Claude-Code-Hub 源表、Claude-Code-Hub Quota—Monitor 数据库以及 Redis 缓存的运行状态"
                 />
               )}
             </div>
@@ -1386,9 +1492,222 @@ export function SystemSettingsPage({
                   </div>
                 </div>
               )}
+
+              {activePanel === 'status' && (
+                <div className="grid gap-6">
+                  <div className="flex flex-col gap-4 rounded-2xl border border-border/40 bg-muted/10 p-5 shadow-sm md:flex-row md:items-center md:justify-between">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <div className="h-4 w-1 rounded-full bg-emerald-500" />
+                        <span className="text-sm font-bold text-foreground tracking-tight">运行状态快照</span>
+                      </div>
+                      <p className="text-[11px] font-medium leading-relaxed text-muted-foreground">
+                        手动刷新后会重新读取 PostgreSQL、SQLite 和 Redis 当前状态。
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="rounded-lg border border-border/60 bg-background/70 px-3 py-2 text-[11px] font-bold text-muted-foreground">
+                        最近采样: {formatDateTime(systemStatus?.generatedAt)}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => void loadSystemStatus(true)}
+                        disabled={systemStatusLoading}
+                        className="h-10 rounded-xl px-4 font-bold"
+                      >
+                        {systemStatusLoading ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            刷新中
+                          </>
+                        ) : (
+                          <>
+                            <RefreshCw className="mr-2 h-4 w-4" />
+                            刷新状态
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {systemStatusError ? (
+                    <div className="rounded-2xl border border-rose-500/30 bg-rose-500/5 p-5 text-sm text-rose-600 shadow-sm">
+                      <div className="font-bold">读取系统状态失败</div>
+                      <div className="mt-1 text-xs font-medium text-rose-500/90">{systemStatusError}</div>
+                    </div>
+                  ) : null}
+
+                  {!systemStatus && systemStatusLoading ? (
+                    <div className="flex items-center gap-3 rounded-2xl border border-border/40 bg-background/50 px-5 py-6 text-sm text-muted-foreground shadow-sm">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      正在读取系统状态...
+                    </div>
+                  ) : null}
+
+                  {systemStatus ? (
+                    <>
+                      <div className="grid gap-6 xl:grid-cols-2">
+                        <div className="rounded-2xl border border-border/40 bg-background/60 p-5 shadow-sm">
+                          <div className="flex items-start justify-between gap-4">
+                            <div>
+                              <div className="flex items-center gap-2 text-sm font-bold text-foreground">
+                                <Server className="h-4 w-4 text-blue-500" />
+                                Claude Code Hub源库
+                              </div>
+                            </div>
+                            <div className="group/tooltip relative flex shrink-0 items-center gap-2">
+                                <span className={cn(SYSTEM_STATUS_BADGE_BASE_CLASS, 'border-blue-500/20 bg-blue-500/10 uppercase text-blue-600')}>
+                                  PostgreSQL
+                                </span>
+                                <span className={cn(SYSTEM_STATUS_BADGE_BASE_CLASS, 'border-blue-500/20 bg-blue-500/10 text-blue-600')}>
+                                  {formatRecordCount(systemStatus.hubSource.tableCount)} 张表
+                                </span>
+                              <div className="pointer-events-none absolute right-0 top-full z-20 mt-2 w-[320px] max-w-[min(320px,calc(100vw-3rem))] rounded-2xl border border-border/40 bg-background/95 p-4 text-xs opacity-0 shadow-2xl backdrop-blur-md transition-all duration-200 group-hover/tooltip:opacity-100 group-hover/tooltip:translate-y-1">
+                                <div className="font-bold text-foreground">PostgreSQL 连接配置</div>
+                                <div className="mt-2 break-all font-mono text-muted-foreground">
+                                  {systemStatus.hubSource.connectionDisplay}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="mt-5 overflow-hidden rounded-xl border border-border/40">
+                            <div className="grid grid-cols-[minmax(0,1fr)_120px] bg-muted/20 px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+                              <span>表名</span>
+                              <span className="text-right">记录数</span>
+                            </div>
+                            <div className="divide-y divide-border/40">
+                              {systemStatus.hubSource.tables.map((table) => (
+                                <div
+                                  key={table.name}
+                                  className="grid grid-cols-[minmax(0,1fr)_120px] items-center px-4 py-3 text-sm"
+                                >
+                                  <span className="truncate font-mono text-foreground">{table.name}</span>
+                                  <span className="text-right font-bold text-foreground">{formatRecordCount(table.rowCount)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl border border-border/40 bg-background/60 p-5 shadow-sm">
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 text-sm font-bold text-foreground">
+                                <Database className="h-4 w-4 text-amber-500" />
+                                <span className="truncate whitespace-nowrap">Claude Code Hub Quota Monitor数据库</span>
+                              </div>
+                            </div>
+                            <div className="group/tooltip relative flex shrink-0 items-center gap-2">
+                              <span className={cn(SYSTEM_STATUS_BADGE_BASE_CLASS, 'border-amber-500/20 bg-amber-500/10 uppercase text-amber-600')}>
+                                SQLite
+                              </span>
+                              <span className={cn(SYSTEM_STATUS_BADGE_BASE_CLASS, 'border-amber-500/20 bg-amber-500/10 text-amber-600')}>
+                                {formatRecordCount(systemStatus.monitorDatabase.tableCount)} 张表
+                              </span>
+                              <div className="pointer-events-none absolute right-0 top-full z-20 mt-2 w-[320px] max-w-[min(320px,calc(100vw-3rem))] rounded-2xl border border-border/40 bg-background/95 p-4 text-xs opacity-0 shadow-2xl backdrop-blur-md transition-all duration-200 group-hover/tooltip:opacity-100 group-hover/tooltip:translate-y-1">
+                                <div className="font-bold text-foreground">SQLite 文件位置</div>
+                                <div className="mt-2 break-all font-mono text-muted-foreground">
+                                  {systemStatus.monitorDatabase.path}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="mt-5 overflow-hidden rounded-xl border border-border/40">
+                            <div className="grid grid-cols-[minmax(0,1fr)_120px] bg-muted/20 px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+                              <span>表名</span>
+                              <span className="text-right">记录数</span>
+                            </div>
+                            <div className="divide-y divide-border/40">
+                              {systemStatus.monitorDatabase.tables.length === 0 ? (
+                                <div className="px-4 py-6 text-sm text-muted-foreground">当前 SQLite 中还没有业务表。</div>
+                              ) : (
+                                systemStatus.monitorDatabase.tables.map((table) => (
+                                  <div
+                                    key={table.name}
+                                    className="grid grid-cols-[minmax(0,1fr)_120px] items-center px-4 py-3 text-sm"
+                                  >
+                                    <span className="truncate font-mono text-foreground">{table.name}</span>
+                                    <span className="text-right font-bold text-foreground">{formatRecordCount(table.rowCount)}</span>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                        <div className="rounded-2xl border border-border/40 bg-background/60 p-5 shadow-sm">
+                          <div className="flex items-start justify-between gap-4">
+                            <div>
+                              <div className="flex items-center gap-2 text-sm font-bold text-foreground">
+                                <Activity className="h-4 w-4 text-emerald-500" />
+                                Redis 缓存状态
+                              </div>
+                            </div>
+                            <div className="group/tooltip relative">
+                              <span
+                                className={cn(
+                                  SYSTEM_STATUS_BADGE_BASE_CLASS,
+                                  !systemStatus.redis.enabled
+                                    ? 'border border-muted-foreground/20 bg-muted/30 text-muted-foreground'
+                                    : systemStatus.redis.connected
+                                      ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-600'
+                                      : 'border-rose-500/20 bg-rose-500/10 text-rose-600',
+                                )}
+                              >
+                                {!systemStatus.redis.enabled
+                                  ? '未启用'
+                                  : systemStatus.redis.connected
+                                    ? '已连接'
+                                    : '连接失败'}
+                              </span>
+                              {systemStatus.redis.enabled && systemStatus.redis.connected && systemStatus.redis.connectionDisplay ? (
+                                <div className="pointer-events-none absolute right-0 top-full z-20 mt-2 w-[320px] max-w-[min(320px,calc(100vw-3rem))] rounded-2xl border border-border/40 bg-background/95 p-4 text-xs opacity-0 shadow-2xl backdrop-blur-md transition-all duration-200 group-hover/tooltip:opacity-100 group-hover/tooltip:translate-y-1">
+                                  <div className="font-bold text-foreground">Redis 配置</div>
+                                  <div className="mt-2 break-all font-mono text-muted-foreground">
+                                    {systemStatus.redis.connectionDisplay}
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
+                        <div className="mt-5 grid gap-3 md:grid-cols-3">
+                          <div className="rounded-xl border border-border/40 bg-muted/20 p-4">
+                            <div className="text-[11px] font-medium text-muted-foreground">Redis 启用状态</div>
+                            <div className="mt-2 text-lg font-extrabold tracking-tight text-foreground">
+                              {systemStatus.redis.enabled ? '已配置' : '未配置'}
+                            </div>
+                          </div>
+                          <div className="rounded-xl border border-border/40 bg-muted/20 p-4">
+                            <div className="text-[11px] font-medium text-muted-foreground">连接状态</div>
+                            <div className="mt-2 text-lg font-extrabold tracking-tight text-foreground">
+                              {systemStatus.redis.enabled
+                                ? (systemStatus.redis.connected ? '正常' : '失败')
+                                : '未启用'}
+                            </div>
+                          </div>
+                          <div className="rounded-xl border border-border/40 bg-muted/20 p-4">
+                            <div className="text-[11px] font-medium text-muted-foreground">最后更新时间</div>
+                            <div className="mt-2 text-sm font-bold text-foreground">
+                              {formatDateTime(systemStatus.redis.lastUpdatedAt)}
+                            </div>
+                          </div>
+                        </div>
+                        {systemStatus.redis.errorMessage ? (
+                          <div className="mt-4 rounded-xl border border-rose-500/20 bg-rose-500/5 px-4 py-3 text-xs font-medium text-rose-600">
+                            Redis 错误: {systemStatus.redis.errorMessage}
+                          </div>
+                        ) : null}
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+              )}
             </CardContent>
 
-            <div className="flex items-center justify-end gap-3 border-t border-border/40 bg-muted/20 px-8 py-6">
+            {activePanel !== 'status' && (
+              <div className="flex items-center justify-end gap-3 border-t border-border/40 bg-muted/20 px-8 py-6">
               <Button
                 variant="outline"
                 disabled={saving}
@@ -1432,7 +1751,8 @@ export function SystemSettingsPage({
                   </>
                 )}
               </Button>
-            </div>
+              </div>
+            )}
           </Card>
         </div>
       </div>

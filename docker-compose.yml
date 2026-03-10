@@ -1,4 +1,26 @@
 services:
+  postgres:
+    profiles: ["local-test"]
+    image: postgres:16-alpine
+    container_name: ${LOCAL_POSTGRES_CONTAINER_NAME:-claude-code-hub-db-local}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${LOCAL_POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${LOCAL_POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${LOCAL_POSTGRES_DB:-claude_code_hub}
+    ports:
+      - "${LOCAL_POSTGRES_BIND_IP:-127.0.0.1}:${LOCAL_POSTGRES_PORT:-35432}:5432"
+    volumes:
+      - local-postgres-data:/var/lib/postgresql/data
+      - ./docker/local-test/init-postgres.sql:/docker-entrypoint-initdb.d/01-init-postgres.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${LOCAL_POSTGRES_USER:-postgres} -d ${LOCAL_POSTGRES_DB:-claude_code_hub}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - claude-code-hub-net
+
   app:
     build:
       context: .
@@ -20,6 +42,9 @@ services:
       MONITOR_ADMIN_PASSWORD: ${MONITOR_ADMIN_PASSWORD:?MONITOR_ADMIN_PASSWORD is required}
       MONITOR_PROVIDER_SCHEMA: ${MONITOR_PROVIDER_SCHEMA:-public}
       MONITOR_PROVIDER_TABLE: ${MONITOR_PROVIDER_TABLE:-providers}
+      MONITOR_SETTINGS_DB_PATH: ${MONITOR_SETTINGS_DB_PATH:-/app/data/provider-settings.sqlite}
+      MONITOR_SQLITE_SEED_PATH: ${MONITOR_SQLITE_SEED_PATH:-/app-seed/provider-settings.sqlite}
+      MONITOR_SQLITE_IMPORT_MODE: ${MONITOR_SQLITE_IMPORT_MODE:-if-missing}
       MONITOR_CACHE_TTL_MS: ${MONITOR_CACHE_TTL_MS:-60000}
       MONITOR_RESULT_CACHE_TTL_SEC: ${MONITOR_RESULT_CACHE_TTL_SEC:-604800}
       MONITOR_REDIS_URL: ${MONITOR_REDIS_URL:-}
@@ -29,6 +54,7 @@ services:
       MONITOR_DEBUG_HTTP: ${MONITOR_DEBUG_HTTP:-false}
     volumes:
       - ${DATA_SOURCE:-./data}:/app/data
+      - ${SQLITE_SEED_ROOT:-.}:/app-seed:ro
 
 networks:
   claude-code-hub-net:
@@ -37,3 +63,4 @@ networks:
 
 volumes:
   app-data:
+  local-postgres-data:

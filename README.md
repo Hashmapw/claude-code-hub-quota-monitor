@@ -152,6 +152,26 @@ sudo chown 1001:1001 /home/ubuntu/claude-quota-monitor-data
 
 </details>
 
+<details>
+<summary>把已有的 SQLite 生产库导入本地容器</summary>
+
+如果仓库根目录已经有 `provider-settings.sqlite`，可以把它作为种子库导入容器内运行库：
+
+```bash
+# .env
+DATA_SOURCE=./data
+MONITOR_SETTINGS_DB_PATH=/app/data/provider-settings.sqlite
+SQLITE_SEED_ROOT=.
+MONITOR_SQLITE_SEED_PATH=/app-seed/provider-settings.sqlite
+MONITOR_SQLITE_IMPORT_MODE=if-missing
+```
+
+- `if-missing`：仅当容器运行库不存在时导入
+- `overwrite`：每次容器启动都用种子库覆盖运行库
+- `skip`：跳过自动导入
+
+</details>
+
 ---
 
 ### 方式二：本地开发
@@ -1082,6 +1102,8 @@ npm run dev
 | `MONITOR_RESULT_CACHE_TTL_SEC` | `604800` | 结果缓存 TTL（秒，默认 7 天） |
 | `MONITOR_PROXY_URL` | 无 | HTTP / HTTPS / SOCKS5 代理（也可在设置页配置） |
 | `MONITOR_SETTINGS_DB_PATH` | 自动探测 | SQLite 配置库路径，不设则自动放在 `data/` 下 |
+| `MONITOR_SQLITE_SEED_PATH` | 无 | 容器内 SQLite 种子文件路径，用于启动时导入 |
+| `MONITOR_SQLITE_IMPORT_MODE` | `if-missing` | SQLite 导入模式：`skip` / `if-missing` / `overwrite` |
 | `MONITOR_PROJECT_ROOT` | 自动探测 | 项目根目录，用于 SQLite 路径探测 |
 | `MONITOR_DEBUG_HTTP` | `false` | 启用 HTTP 请求调试日志 |
 | `PORT` | `3010` | 服务端口 |
@@ -1094,6 +1116,7 @@ Docker 部署常用变量：
 | `HOST_PORT` | `23010` | 主机端口 |
 | `CONTAINER_PORT` | `3010` | 容器端口 |
 | `DATA_SOURCE` | `./data` | 数据目录挂载源 |
+| `SQLITE_SEED_ROOT` | `.` | SQLite 种子文件所在宿主机目录 |
 | `HUB_EXTERNAL_NETWORK` | `claude-code-hub-net-3gct` | 外部网络名（需存在） |
 
 > 部分变量支持从已有环境自动回退：`MONITOR_DSN` 回退 `DSN` → `DATABASE_URL` → `../claude-code-hub/.env`；`MONITOR_REDIS_URL` 回退 `REDIS_URL`；`MONITOR_PROXY_URL` 回退 `MONITOR_HTTP_PROXY` → `HTTPS_PROXY` → `HTTP_PROXY` → `ALL_PROXY`。
