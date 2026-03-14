@@ -34,6 +34,12 @@ type VendorBalanceHistoryPoint = {
   createdAt: string;
 };
 
+type VendorBalanceHistoryHubDailyUsage = {
+  dateKey: string;
+  totalCostUsd: number;
+  totalTokens: number;
+};
+
 type VendorBalanceHistoryResponse = {
   ok: boolean;
   generatedAt: string;
@@ -43,8 +49,19 @@ type VendorBalanceHistoryResponse = {
   vendors: VendorOption[];
   points: VendorBalanceHistoryPoint[];
   latestPoint: VendorBalanceHistoryPoint | null;
+  hubDailyUsage: VendorBalanceHistoryHubDailyUsage[];
   message?: string;
 };
+
+type VendorBalanceHistoryHubDailyUsageResponse = {
+  ok: boolean;
+  vendorId: number | null;
+  range: VendorBalanceHistoryRange;
+  hubDailyUsage: VendorBalanceHistoryHubDailyUsage[];
+  message?: string;
+};
+
+type VendorBalanceHistoryHubState = 'loading' | 'ready' | 'empty' | 'error';
 
 type VendorBalanceDailyDelta = {
   dateKey: string;
@@ -53,7 +70,18 @@ type VendorBalanceDailyDelta = {
   startCheckedAt: string;
   endCheckedAt: string;
   remainingDelta: number | null;
+  remainingMaxValue: number | null;
+  remainingMinValue: number | null;
+  remainingMaxCheckedAt: string | null;
+  remainingMinCheckedAt: string | null;
   usedDelta: number | null;
+  usedMaxValue: number | null;
+  usedMinValue: number | null;
+  usedMaxCheckedAt: string | null;
+  usedMinCheckedAt: string | null;
+  hubCostUsd: number;
+  hubTotalTokens: number;
+  hubState: VendorBalanceHistoryHubState;
 };
 
 const RANGE_OPTIONS: Array<{ value: VendorBalanceHistoryRange; label: string }> = [
@@ -90,6 +118,13 @@ function formatHistoryDateLabel(value: string): string {
   return formatHistoryDateKey(value).replace(/\//g, '-');
 }
 
+function formatHistoryMetricUsd(value: number | null): string {
+  if (!hasFiniteNumber(value)) {
+    return '-';
+  }
+  return `$${formatUsd(value)}`;
+}
+
 function formatDeltaUsd(value: number | null): string {
   if (!hasFiniteNumber(value)) {
     return '-';
@@ -97,7 +132,87 @@ function formatDeltaUsd(value: number | null): string {
   if (Math.abs(value) < 0.00005) {
     return '$0';
   }
-  return `${value > 0 ? '+' : '-'}$${formatUsd(Math.abs(value))}`;
+  return `$${formatUsd(Math.abs(value))}`;
+}
+
+function formatHistoryTime(value: string | null): string {
+  if (!value) {
+    return '-';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '-';
+  }
+  return date.toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Shanghai',
+  });
+}
+
+function formatTokenCount(value: number | null): string {
+  if (!hasFiniteNumber(value)) {
+    return '-';
+  }
+  return new Intl.NumberFormat('zh-CN', {
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function sumMonotonicSegments(values: number[], direction: 'increase' | 'decrease'): number {
+  if (values.length <= 1) {
+    return 0;
+  }
+
+  let segmentStart = values[0];
+  let previousValue = values[0];
+  let total = 0;
+
+  for (let index = 1; index < values.length; index += 1) {
+    const currentValue = values[index];
+    const keepsDirection =
+      direction === 'increase'
+        ? currentValue >= previousValue
+        : currentValue <= previousValue;
+
+    if (keepsDirection) {
+      previousValue = currentValue;
+      continue;
+    }
+
+    total += direction === 'increase' ? previousValue - segmentStart : segmentStart - previousValue;
+    segmentStart = currentValue;
+    previousValue = currentValue;
+  }
+
+  total += direction === 'increase' ? previousValue - segmentStart : segmentStart - previousValue;
+  return total;
+}
+
+function resolveHubCostComparison(
+  hubState: VendorBalanceHistoryHubState,
+  usedDelta: number | null,
+  hubCostUsd: number,
+): '正在加载' | '实际偏少' | '实际偏多' | '相等' | '暂无数据' | '加载失败' {
+  if (hubState === 'loading') {
+    return '正在加载';
+  }
+  if (hubState === 'error') {
+    return '加载失败';
+  }
+  if (hubState === 'empty') {
+    return '暂无数据';
+  }
+  if (!hasFiniteNumber(usedDelta)) {
+    return '暂无数据';
+  }
+  const normalizedUsedDelta = Math.round(usedDelta * 100) / 100;
+  const normalizedHubCost = Math.round(hubCostUsd * 100) / 100;
+  const diff = normalizedUsedDelta - normalizedHubCost;
+  if (Math.abs(diff) < 0.00005) {
+    return '相等';
+  }
+  return diff < 0 ? '实际偏少' : '实际偏多';
 }
 
 function HistoryTooltip({
@@ -371,8 +486,12 @@ function HistoryLineChart({
 export function VendorBalanceHistoryPage({ initialData }: { initialData: VendorBalanceHistoryResponse }) {
   const [data, setData] = useState(initialData);
   const [loading, setLoading] = useState(false);
+  const [hubDailyUsage, setHubDailyUsage] = useState<VendorBalanceHistoryHubDailyUsage[]>(initialData.hubDailyUsage);
+  const [hubLoading, setHubLoading] = useState(false);
+  const [hubError, setHubError] = useState<string | null>(null);
   const [showRemaining, setShowRemaining] = useState(true);
   const [showUsed, setShowUsed] = useState(true);
+  const hubRequestIdRef = useRef(0);
 
   const toggleRemaining = useCallback(() => {
     if (showRemaining && !showUsed) {
@@ -407,6 +526,8 @@ export function VendorBalanceHistoryPage({ initialData }: { initialData: VendorB
         throw new Error(body.message || '加载余额历史失败');
       }
       setData(body);
+      setHubDailyUsage(body.hubDailyUsage);
+      setHubError(null);
     } catch (error) {
       toast.error('加载余额历史失败', error instanceof Error ? error.message : String(error));
     } finally {
@@ -435,7 +556,67 @@ export function VendorBalanceHistoryPage({ initialData }: { initialData: VendorB
     ? latestPoint.remainingUsd + latestPoint.usedUsd
     : null;
   const tableRows = useMemo(() => [...data.points].reverse(), [data.points]);
+
+  useEffect(() => {
+    if (!hasSelectedVendor || data.points.length === 0) {
+      setHubDailyUsage([]);
+      setHubLoading(false);
+      setHubError(null);
+      return;
+    }
+
+    const requestId = hubRequestIdRef.current + 1;
+    hubRequestIdRef.current = requestId;
+    const controller = new AbortController();
+    const params = new URLSearchParams({
+      vendorId: String(data.vendorId),
+      range: data.range,
+    });
+
+    setHubLoading(true);
+    setHubError(null);
+    setHubDailyUsage([]);
+
+    void fetch(withBasePath(`/api/vendor-balance-history/hub-daily?${params.toString()}`), {
+      cache: 'no-store',
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const body = (await response.json()) as VendorBalanceHistoryHubDailyUsageResponse;
+        if (!response.ok || !body.ok) {
+          throw new Error(body.message || '加载 Claude Code Hub 成本失败');
+        }
+        if (hubRequestIdRef.current !== requestId) {
+          return;
+        }
+        setHubDailyUsage(body.hubDailyUsage);
+        setHubError(null);
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted || hubRequestIdRef.current !== requestId) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        setHubDailyUsage([]);
+        setHubError(message);
+        toast.error('加载 Claude Code Hub 成本失败', message);
+      })
+      .finally(() => {
+        if (controller.signal.aborted || hubRequestIdRef.current !== requestId) {
+          return;
+        }
+        setHubLoading(false);
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [data.points, data.range, data.vendorId, hasSelectedVendor]);
+
   const dailyDeltas = useMemo<VendorBalanceDailyDelta[]>(() => {
+    const hubDailyUsageMap = new Map(
+      hubDailyUsage.map((item) => [item.dateKey, item] as const),
+    );
     const points = [...data.points].sort((left, right) => left.checkedAt.localeCompare(right.checkedAt));
     const grouped = new Map<string, VendorBalanceHistoryPoint[]>();
 
@@ -450,15 +631,34 @@ export function VendorBalanceHistoryPage({ initialData }: { initialData: VendorB
       .map(([dateKey, bucket]) => {
         const firstPoint = bucket[0];
         const lastPoint = bucket[bucket.length - 1];
-
-        const remainingDelta =
-          hasFiniteNumber(firstPoint?.remainingUsd) && hasFiniteNumber(lastPoint?.remainingUsd)
-            ? lastPoint.remainingUsd - firstPoint.remainingUsd
-            : null;
-        const usedDelta =
-          hasFiniteNumber(firstPoint?.usedUsd) && hasFiniteNumber(lastPoint?.usedUsd)
-            ? lastPoint.usedUsd - firstPoint.usedUsd
-            : null;
+        const remainingPoints = bucket.filter((point) => hasFiniteNumber(point.remainingUsd));
+        const usedPoints = bucket.filter((point) => hasFiniteNumber(point.usedUsd));
+        const remainingValues = remainingPoints.map((point) => point.remainingUsd as number);
+        const usedValues = usedPoints.map((point) => point.usedUsd as number);
+        const remainingMaxValue = remainingValues.length > 0 ? Math.max(...remainingValues) : null;
+        const remainingMinValue = remainingValues.length > 0 ? Math.min(...remainingValues) : null;
+        const usedMaxValue = usedValues.length > 0 ? Math.max(...usedValues) : null;
+        const usedMinValue = usedValues.length > 0 ? Math.min(...usedValues) : null;
+        const remainingMaxPoint = hasFiniteNumber(remainingMaxValue)
+          ? remainingPoints.find((point) => point.remainingUsd === remainingMaxValue) ?? null
+          : null;
+        const remainingMinPoint = hasFiniteNumber(remainingMinValue)
+          ? remainingPoints.find((point) => point.remainingUsd === remainingMinValue) ?? null
+          : null;
+        const usedMaxPoint = hasFiniteNumber(usedMaxValue)
+          ? usedPoints.find((point) => point.usedUsd === usedMaxValue) ?? null
+          : null;
+        const usedMinPoint = hasFiniteNumber(usedMinValue)
+          ? usedPoints.find((point) => point.usedUsd === usedMinValue) ?? null
+          : null;
+        const hubDailyUsage = hubDailyUsageMap.get(dateKey) ?? null;
+        const hubState: VendorBalanceHistoryHubState = hubLoading
+          ? 'loading'
+          : hubError
+            ? 'error'
+            : hubDailyUsage
+              ? 'ready'
+              : 'empty';
 
         return {
           dateKey,
@@ -466,12 +666,29 @@ export function VendorBalanceHistoryPage({ initialData }: { initialData: VendorB
           pointCount: bucket.length,
           startCheckedAt: firstPoint.checkedAt,
           endCheckedAt: lastPoint.checkedAt,
-          remainingDelta,
-          usedDelta,
+          remainingDelta:
+            remainingValues.length > 0
+              ? -sumMonotonicSegments(remainingValues, 'decrease')
+              : null,
+          remainingMaxValue,
+          remainingMinValue,
+          remainingMaxCheckedAt: remainingMaxPoint?.checkedAt ?? null,
+          remainingMinCheckedAt: remainingMinPoint?.checkedAt ?? null,
+          usedDelta:
+            usedValues.length > 0
+              ? sumMonotonicSegments(usedValues, 'increase')
+              : null,
+          usedMaxValue,
+          usedMinValue,
+          usedMaxCheckedAt: usedMaxPoint?.checkedAt ?? null,
+          usedMinCheckedAt: usedMinPoint?.checkedAt ?? null,
+          hubCostUsd: hubDailyUsage?.totalCostUsd ?? 0,
+          hubTotalTokens: hubDailyUsage?.totalTokens ?? 0,
+          hubState,
         };
       })
       .sort((left, right) => right.dateKey.localeCompare(left.dateKey));
-  }, [data.points]);
+  }, [data.points, hubDailyUsage, hubError, hubLoading]);
 
   return (
     <div className="mx-auto max-w-7xl space-y-8 px-4 py-10 md:px-6">
@@ -711,58 +928,105 @@ export function VendorBalanceHistoryPage({ initialData }: { initialData: VendorB
                     {dailyDeltas.map((item) => (
                       <div
                         key={item.dateKey}
-                        className="relative overflow-hidden rounded-2xl border border-border/50 bg-background/80 p-4 shadow-sm transition-all hover:shadow-md hover:border-border/80"
+                        className="relative overflow-hidden rounded-xl border border-border/50 bg-muted/20 p-4 transition-colors hover:bg-muted/40"
                       >
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="font-semibold text-foreground flex items-center gap-2">
-                            {item.dateLabel}
-                          </div>
-                          <div className="inline-flex items-center rounded-full bg-muted/50 px-2 py-0.5 text-[11px] font-medium text-muted-foreground border border-border/40">
-                            {item.pointCount} 次快照
-                          </div>
-                        </div>
-                        
-                        <div className="grid grid-cols-2 gap-3 mt-1">
-                          <div className="flex flex-col gap-1 rounded-xl bg-emerald-500/5 px-3 py-2.5 border border-emerald-500/10">
-                            <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-600/70 dark:text-emerald-400/70">余额变动</span>
-                            <span
-                              className={cn(
-                                'font-mono text-sm font-bold',
-                                hasFiniteNumber(item.remainingDelta)
-                                  ? item.remainingDelta > 0
-                                    ? 'text-emerald-600 dark:text-emerald-400'
-                                    : item.remainingDelta < 0
-                                      ? 'text-rose-600 dark:text-rose-400'
-                                      : 'text-foreground/70'
-                                  : 'text-muted-foreground'
-                              )}
-                            >
-                              {formatDeltaUsd(item.remainingDelta)}
-                            </span>
-                          </div>
-                          
-                          <div className="flex flex-col gap-1 rounded-xl bg-rose-500/5 px-3 py-2.5 border border-rose-500/10">
-                            <span className="text-[11px] font-semibold uppercase tracking-wider text-rose-600/70 dark:text-rose-400/70">已用变动</span>
-                            <span
-                              className={cn(
-                                'font-mono text-sm font-bold',
-                                hasFiniteNumber(item.usedDelta)
-                                  ? item.usedDelta > 0
-                                    ? 'text-rose-600 dark:text-rose-400'
-                                    : item.usedDelta < 0
-                                      ? 'text-emerald-600 dark:text-emerald-400'
-                                      : 'text-foreground/70'
-                                  : 'text-muted-foreground'
-                              )}
-                            >
-                              {formatDeltaUsd(item.usedDelta)}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="mt-3 text-[10px] text-muted-foreground/60 flex items-center justify-between">
-                          <span>{new Date(item.startCheckedAt).toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit'})} 起</span>
-                          <span>{new Date(item.endCheckedAt).toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit'})} 止</span>
-                        </div>
+                        {(() => {
+                          const comparison = resolveHubCostComparison(item.hubState, item.usedDelta, item.hubCostUsd);
+                          const comparisonClassName =
+                            comparison === '实际偏多'
+                              ? 'border-rose-500/20 bg-rose-500/10 text-rose-700 dark:text-rose-300'
+                              : comparison === '实际偏少'
+                                ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                                : comparison === '相等'
+                                  ? 'border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                                  : comparison === '正在加载'
+                                    ? 'border-orange-500/20 bg-orange-500/10 text-orange-700 dark:text-orange-300'
+                                    : comparison === '加载失败'
+                                      ? 'border-rose-500/20 bg-rose-500/10 text-rose-700 dark:text-rose-300'
+                                      : 'border-border/60 bg-muted/50 text-muted-foreground';
+                          return (
+                            <div className="flex flex-col gap-4">
+                              <div className="flex items-center justify-between">
+                                <div className="text-sm font-semibold text-foreground">
+                                  {item.dateLabel}
+                                </div>
+                                <div className="inline-flex items-center rounded-md border border-border/50 bg-background/50 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                                  {item.pointCount} 次快照
+                                </div>
+                              </div>
+                              
+                                <div className="flex flex-col gap-2.5 rounded-lg border border-border/40 bg-background/50 p-3 shadow-sm">
+                                  <div className="grid grid-cols-2 items-start gap-4">
+                                    <div className="flex flex-col">
+                                      <div className="text-xs font-medium text-muted-foreground mb-1">已用变动</div>
+                                      <div className={cn(
+                                        "font-mono text-base font-bold leading-none",
+                                        hasFiniteNumber(item.usedDelta) ? (item.usedDelta > 0 ? "text-rose-600 dark:text-rose-400" : "text-foreground") : "text-muted-foreground"
+                                      )}>
+                                        {formatDeltaUsd(item.usedDelta)}
+                                      </div>
+                                    </div>
+                                    
+                                    <div className="flex flex-col items-end">
+                                      <div className="text-xs font-medium text-muted-foreground mb-1">CCH成本变动</div>
+                                      <div className="font-mono text-base font-bold text-foreground leading-none">
+                                        {formatHistoryMetricUsd(item.hubCostUsd)}
+                                      </div>
+                                      <div className="text-[10px] text-muted-foreground/80 font-mono mt-1.5 leading-none">
+                                        {formatTokenCount(item.hubTotalTokens)} tokens
+                                      </div>
+                                    </div>
+                                  </div>
+                                  
+                                  <div className="flex items-center justify-between border-t border-border/40 pt-2.5">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs font-medium text-muted-foreground">余额变动:</span>
+                                      <span className={cn(
+                                        "font-mono text-xs font-semibold",
+                                        hasFiniteNumber(item.remainingDelta) ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"
+                                      )}>
+                                        {formatDeltaUsd(item.remainingDelta)}
+                                      </span>
+                                    </div>
+                                  <span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold", comparisonClassName)}>
+                                    {comparison}
+                                  </span>
+                                </div>
+                              </div>
+                              
+                              <div className="flex flex-col gap-1.5 rounded-lg border border-border/30 bg-background/30 px-3 py-2 text-[10px]">
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                                  <span className="font-medium text-emerald-600/80 dark:text-emerald-400/80">余额极值</span>
+                                  <div className="font-mono text-muted-foreground flex items-center gap-1.5 sm:justify-end">
+                                    <div>
+                                      <span className="text-emerald-600/90 dark:text-emerald-400/90">{formatHistoryMetricUsd(item.remainingMaxValue)}</span>
+                                      <span className="opacity-60 ml-0.5">({formatHistoryTime(item.remainingMaxCheckedAt)})</span>
+                                    </div>
+                                    <span className="opacity-40">/</span>
+                                    <div>
+                                      <span className="text-emerald-600/90 dark:text-emerald-400/90">{formatHistoryMetricUsd(item.remainingMinValue)}</span>
+                                      <span className="opacity-60 ml-0.5">({formatHistoryTime(item.remainingMinCheckedAt)})</span>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                                  <span className="font-medium text-rose-600/80 dark:text-rose-400/80">已用极值</span>
+                                  <div className="font-mono text-muted-foreground flex items-center gap-1.5 sm:justify-end">
+                                    <div>
+                                      <span className="text-rose-600/90 dark:text-rose-400/90">{formatHistoryMetricUsd(item.usedMaxValue)}</span>
+                                      <span className="opacity-60 ml-0.5">({formatHistoryTime(item.usedMaxCheckedAt)})</span>
+                                    </div>
+                                    <span className="opacity-40">/</span>
+                                    <div>
+                                      <span className="text-rose-600/90 dark:text-rose-400/90">{formatHistoryMetricUsd(item.usedMinValue)}</span>
+                                      <span className="opacity-60 ml-0.5">({formatHistoryTime(item.usedMinCheckedAt)})</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </div>
                     ))}
                   </div>

@@ -25,6 +25,12 @@ export type EndpointSourceStatus = {
   }>;
 };
 
+export type HubDailyUsageStat = {
+  dateKey: string;
+  totalCostUsd: number;
+  totalTokens: number;
+};
+
 let sqlClient: postgres.Sql | null = null;
 
 function normalizeIdentifier(value: string, fallback: string): string {
@@ -254,20 +260,33 @@ export async function getEndpointSourceStatus(): Promise<EndpointSourceStatus> {
   const table = normalizeIdentifier(config.table, 'providers');
   const rows = await sql().unsafe(`select * from "${schema}"."${table}" order by id asc`);
   const normalizedRows = buildFromRows(rows as Array<Record<string, unknown>>);
+  const usageLedgerCountRows = await sql().unsafe(`select count(*)::bigint as count from "${schema}"."usage_ledger"`);
+  const usageLedgerRowCount = pickNullableNumber(
+    (usageLedgerCountRows as Array<Record<string, unknown>>)[0] ?? {},
+    ['count'],
+  ) ?? 0;
+  const tables = [
+    {
+      name: `${schema}.${table}`,
+      rowCount: rows.length,
+      readableRecordCount: normalizedRows.length,
+    },
+    {
+      name: `${schema}.usage_ledger`,
+      rowCount: usageLedgerRowCount,
+      readableRecordCount: usageLedgerRowCount,
+    },
+  ];
+  const rawRecordCount = tables.reduce((sum, item) => sum + item.rowCount, 0);
+  const readableRecordCount = tables.reduce((sum, item) => sum + item.readableRecordCount, 0);
 
   return {
     schema,
     table,
-    rawRecordCount: rows.length,
-    readableRecordCount: normalizedRows.length,
-    tableCount: 1,
-    tables: [
-      {
-        name: `${schema}.${table}`,
-        rowCount: rows.length,
-        readableRecordCount: normalizedRows.length,
-      },
-    ],
+    rawRecordCount,
+    readableRecordCount,
+    tableCount: tables.length,
+    tables,
   };
 }
 
@@ -282,4 +301,47 @@ export async function getEndpointById(endpointId: number): Promise<DbEndpointRow
   const rows = await sql().unsafe(`select * from "${schema}"."${table}" where id = $1 limit 1`, [endpointId]);
   const list = buildFromRows(rows as Array<Record<string, unknown>>);
   return list[0] ?? null;
+}
+
+export async function listHubDailyUsageStats(
+  endpointIds: number[],
+  startIso?: string | null,
+): Promise<HubDailyUsageStat[]> {
+  const validIds = endpointIds
+    .map((value) => Number(value))
+    .filter((value) => Number.isInteger(value) && value > 0);
+  if (validIds.length === 0) {
+    return [];
+  }
+
+  const config = getConfig();
+  const schema = normalizeIdentifier(config.schema, 'public');
+  const params = startIso ? [validIds, startIso] : [validIds];
+  const dateCondition = startIso ? 'AND created_at >= $2' : '';
+  const rows = await sql().unsafe(`
+    SELECT
+      TO_CHAR((created_at AT TIME ZONE 'Asia/Shanghai')::date, 'YYYY/MM/DD') AS date_key,
+      COALESCE(SUM(cost_usd), 0) AS total_cost_usd,
+      COALESCE(
+        SUM(
+          input_tokens
+          + output_tokens
+          + COALESCE(cache_creation_input_tokens, 0)
+          + COALESCE(cache_read_input_tokens, 0)
+        ),
+        0
+      )::double precision AS total_tokens
+    FROM "${schema}"."usage_ledger"
+    WHERE blocked_by IS NULL
+      AND final_provider_id = ANY($1::int[])
+      ${dateCondition}
+    GROUP BY 1
+    ORDER BY 1 ASC
+  `, params);
+
+  return (rows as Array<Record<string, unknown>>).map((row) => ({
+    dateKey: String(row.date_key || ''),
+    totalCostUsd: pickNullableNumber(row, ['total_cost_usd']) ?? 0,
+    totalTokens: pickNullableNumber(row, ['total_tokens']) ?? 0,
+  })).filter((row) => row.dateKey);
 }

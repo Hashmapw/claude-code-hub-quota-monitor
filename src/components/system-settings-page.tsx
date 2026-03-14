@@ -310,6 +310,7 @@ export function SystemSettingsPage({
   const [systemStatusLoading, setSystemStatusLoading] = useState(false);
   const [systemStatusError, setSystemStatusError] = useState<string | null>(null);
   const draggingVendorIdRef = useRef<number | null>(null);
+  const systemStatusRequestIdRef = useRef(0);
   const vendorRowRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const dragPreviewRef = useRef<{ vendorId: number | null; position: DropPosition | null }>({
     vendorId: null,

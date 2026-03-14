@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getVendorBalanceHistoryPayload } from '@/lib/vendor-balance-history';
+import { getVendorBalanceHistoryHubDailyUsage, normalizeVendorBalanceHistoryRange } from '@/lib/vendor-balance-history';
 
 export const runtime = 'nodejs';
 
@@ -8,14 +8,15 @@ export async function GET(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const vendorIdRaw = url.searchParams.get('vendorId');
     const parsedVendorId = Number(vendorIdRaw);
-    const payload = await getVendorBalanceHistoryPayload(
-      Number.isInteger(parsedVendorId) && parsedVendorId > 0 ? parsedVendorId : null,
-      url.searchParams.get('range'),
-    );
+    const range = normalizeVendorBalanceHistoryRange(url.searchParams.get('range'));
+    const vendorId = Number.isInteger(parsedVendorId) && parsedVendorId > 0 ? parsedVendorId : null;
+    const hubDailyUsage = await getVendorBalanceHistoryHubDailyUsage(vendorId, range);
 
     return NextResponse.json({
       ok: true,
-      ...payload,
+      vendorId,
+      range,
+      hubDailyUsage,
     });
   } catch (error) {
     return NextResponse.json(
