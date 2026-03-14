@@ -66,56 +66,42 @@ type VendorsApiResponse = {
   vendors?: VendorOption[];
 };
 
-type HubSourceStatus = {
-  connectionDisplay: string;
-  schema: string;
-  table: string;
-  rawRecordCount: number;
-  readableRecordCount: number;
-  tableCount: number;
-  tables: Array<{
-    name: string;
-    rowCount: number;
+type SystemStatusSnapshot = {
+  generatedAt: string;
+  hubSource: {
+    connectionDisplay: string;
+    schema: string;
+    table: string;
+    rawRecordCount: number;
     readableRecordCount: number;
-  }>;
+    tableCount: number;
+    tables: Array<{
+      name: string;
+      rowCount: number;
+      readableRecordCount: number;
+    }>;
+  };
+  monitorDatabase: {
+    path: string;
+    tableCount: number;
+    tables: Array<{
+      name: string;
+      rowCount: number;
+    }>;
+  };
+  redis: {
+    enabled: boolean;
+    connected: boolean;
+    lastUpdatedAt: string | null;
+    errorMessage: string | null;
+    connectionDisplay: string | null;
+  };
 };
 
-type MonitorDatabaseStatus = {
-  path: string;
-  tableCount: number;
-  tables: Array<{
-    name: string;
-    rowCount: number;
-  }>;
-};
-
-type RedisStatus = {
-  enabled: boolean;
-  connected: boolean;
-  lastUpdatedAt: string | null;
-  errorMessage: string | null;
-  connectionDisplay: string | null;
-};
-
-type HubSourceStatusApiResponse = {
+type SystemStatusApiResponse = {
   ok: boolean;
   message?: string;
-  generatedAt?: string;
-  hubSource?: HubSourceStatus;
-};
-
-type MonitorDatabaseStatusApiResponse = {
-  ok: boolean;
-  message?: string;
-  generatedAt?: string;
-  monitorDatabase?: MonitorDatabaseStatus;
-};
-
-type RedisStatusApiResponse = {
-  ok: boolean;
-  message?: string;
-  generatedAt?: string;
-  redis?: RedisStatus;
+  status?: SystemStatusSnapshot;
 };
 
 function parseSettingsPanel(raw: string | null | undefined): SettingsPanel {
@@ -320,18 +306,9 @@ export function SystemSettingsPage({
   const [draggingVendorId, setDraggingVendorId] = useState<number | null>(null);
   const [dragOverVendorId, setDragOverVendorId] = useState<number | null>(null);
   const [dragOverPosition, setDragOverPosition] = useState<DropPosition | null>(null);
-  const [statusGeneratedAt, setStatusGeneratedAt] = useState<string | null>(null);
-  const [hubSourceStatus, setHubSourceStatus] = useState<HubSourceStatus | null>(null);
-  const [monitorDatabaseStatus, setMonitorDatabaseStatus] = useState<MonitorDatabaseStatus | null>(null);
-  const [redisStatus, setRedisStatus] = useState<RedisStatus | null>(null);
+  const [systemStatus, setSystemStatus] = useState<SystemStatusSnapshot | null>(null);
   const [systemStatusLoading, setSystemStatusLoading] = useState(false);
   const [systemStatusError, setSystemStatusError] = useState<string | null>(null);
-  const [hubSourceLoading, setHubSourceLoading] = useState(false);
-  const [monitorDatabaseLoading, setMonitorDatabaseLoading] = useState(false);
-  const [redisLoading, setRedisLoading] = useState(false);
-  const [hubSourceError, setHubSourceError] = useState<string | null>(null);
-  const [monitorDatabaseError, setMonitorDatabaseError] = useState<string | null>(null);
-  const [redisError, setRedisError] = useState<string | null>(null);
   const draggingVendorIdRef = useRef<number | null>(null);
   const systemStatusRequestIdRef = useRef(0);
   const vendorRowRefs = useRef<Map<number, HTMLDivElement>>(new Map());
@@ -563,132 +540,26 @@ export function SystemSettingsPage({
     }
   };
 
-  const loadHubSourceStatus = useCallback(async (requestId: number, showToastOnError = false) => {
-    setHubSourceLoading(true);
-    setHubSourceError(null);
-    try {
-      const response = await fetch(withBasePath('/api/system-settings/status/hub-source'), { cache: 'no-store' });
-      const body = (await response.json().catch(() => ({}))) as HubSourceStatusApiResponse;
-      if (!response.ok || !body.ok || !body.hubSource) {
-        throw new Error(body.message || '读取 PostgreSQL 源库状态失败');
-      }
-      if (systemStatusRequestIdRef.current !== requestId) {
-        return true;
-      }
-      setHubSourceStatus(body.hubSource);
-      if (body.generatedAt) {
-        setStatusGeneratedAt(body.generatedAt);
-      }
-      return true;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (systemStatusRequestIdRef.current !== requestId) {
-        return false;
-      }
-      setHubSourceError(message);
-      if (showToastOnError) {
-        toast.error('读取 PostgreSQL 源库状态失败', message);
-      }
-      return false;
-    } finally {
-      if (systemStatusRequestIdRef.current === requestId) {
-        setHubSourceLoading(false);
-      }
-    }
-  }, []);
-
-  const loadMonitorDatabaseStatus = useCallback(async (requestId: number, showToastOnError = false) => {
-    setMonitorDatabaseLoading(true);
-    setMonitorDatabaseError(null);
-    try {
-      const response = await fetch(withBasePath('/api/system-settings/status/monitor-database'), { cache: 'no-store' });
-      const body = (await response.json().catch(() => ({}))) as MonitorDatabaseStatusApiResponse;
-      if (!response.ok || !body.ok || !body.monitorDatabase) {
-        throw new Error(body.message || '读取 SQLite 状态失败');
-      }
-      if (systemStatusRequestIdRef.current !== requestId) {
-        return true;
-      }
-      setMonitorDatabaseStatus(body.monitorDatabase);
-      if (body.generatedAt) {
-        setStatusGeneratedAt(body.generatedAt);
-      }
-      return true;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (systemStatusRequestIdRef.current !== requestId) {
-        return false;
-      }
-      setMonitorDatabaseError(message);
-      if (showToastOnError) {
-        toast.error('读取 SQLite 状态失败', message);
-      }
-      return false;
-    } finally {
-      if (systemStatusRequestIdRef.current === requestId) {
-        setMonitorDatabaseLoading(false);
-      }
-    }
-  }, []);
-
-  const loadRedisStatus = useCallback(async (requestId: number, showToastOnError = false) => {
-    setRedisLoading(true);
-    setRedisError(null);
-    try {
-      const response = await fetch(withBasePath('/api/system-settings/status/redis'), { cache: 'no-store' });
-      const body = (await response.json().catch(() => ({}))) as RedisStatusApiResponse;
-      if (!response.ok || !body.ok || !body.redis) {
-        throw new Error(body.message || '读取 Redis 状态失败');
-      }
-      if (systemStatusRequestIdRef.current !== requestId) {
-        return true;
-      }
-      setRedisStatus(body.redis);
-      if (body.generatedAt) {
-        setStatusGeneratedAt(body.generatedAt);
-      }
-      return true;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (systemStatusRequestIdRef.current !== requestId) {
-        return false;
-      }
-      setRedisError(message);
-      if (showToastOnError) {
-        toast.error('读取 Redis 状态失败', message);
-      }
-      return false;
-    } finally {
-      if (systemStatusRequestIdRef.current === requestId) {
-        setRedisLoading(false);
-      }
-    }
-  }, []);
-
   const loadSystemStatus = useCallback(async (showToastOnError = false) => {
-    const requestId = systemStatusRequestIdRef.current + 1;
-    systemStatusRequestIdRef.current = requestId;
     setSystemStatusLoading(true);
     setSystemStatusError(null);
-
-    const results = await Promise.all([
-      loadHubSourceStatus(requestId, showToastOnError),
-      loadMonitorDatabaseStatus(requestId, showToastOnError),
-      loadRedisStatus(requestId, showToastOnError),
-    ]);
-
-    if (systemStatusRequestIdRef.current !== requestId) {
-      return;
+    try {
+      const response = await fetch(withBasePath('/api/system-settings/status'), { cache: 'no-store' });
+      const body = (await response.json().catch(() => ({}))) as SystemStatusApiResponse;
+      if (!response.ok || !body.ok || !body.status) {
+        throw new Error(body.message || '读取系统状态失败');
+      }
+      setSystemStatus(body.status);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setSystemStatusError(message);
+      if (showToastOnError) {
+        toast.error('读取系统状态失败', message);
+      }
+    } finally {
+      setSystemStatusLoading(false);
     }
-
-    if (results.every((item) => item === false)) {
-      setSystemStatusError('PostgreSQL、SQLite 和 Redis 状态均读取失败');
-    } else {
-      setSystemStatusError(null);
-      setStatusGeneratedAt(new Date().toISOString());
-    }
-    setSystemStatusLoading(false);
-  }, [loadHubSourceStatus, loadMonitorDatabaseStatus, loadRedisStatus]);
+  }, []);
 
   function moveVendor(movingId: number, targetId: number, dropPosition: DropPosition) {
     setVendorsForOrder((current) => applyVendorMoveOrder(current, movingId, targetId, dropPosition));
@@ -742,16 +613,11 @@ export function SystemSettingsPage({
   }, [activePanel, vendorOrderLoading, vendorsForOrder.length]);
 
   useEffect(() => {
-    if (activePanel !== 'status' || systemStatusLoading) {
-      return;
-    }
-    if (hubSourceStatus || monitorDatabaseStatus || redisStatus) {
+    if (activePanel !== 'status' || systemStatusLoading || systemStatus || systemStatusError) {
       return;
     }
     void loadSystemStatus();
-  }, [activePanel, hubSourceStatus, loadSystemStatus, monitorDatabaseStatus, redisStatus, systemStatusLoading]);
-
-  const hasAnySystemStatusData = Boolean(hubSourceStatus || monitorDatabaseStatus || redisStatus);
+  }, [activePanel, loadSystemStatus, systemStatus, systemStatusError, systemStatusLoading]);
 
   const switchPanel = (nextPanel: SettingsPanel) => {
     setActivePanel(nextPanel);
@@ -1642,7 +1508,7 @@ export function SystemSettingsPage({
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="rounded-lg border border-border/60 bg-background/70 px-3 py-2 text-[11px] font-bold text-muted-foreground">
-                        最近采样: {formatDateTime(statusGeneratedAt)}
+                        最近采样: {formatDateTime(systemStatus?.generatedAt)}
                       </span>
                       <Button
                         type="button"
@@ -1673,14 +1539,14 @@ export function SystemSettingsPage({
                     </div>
                   ) : null}
 
-                  {!hasAnySystemStatusData && systemStatusLoading ? (
+                  {!systemStatus && systemStatusLoading ? (
                     <div className="flex items-center gap-3 rounded-2xl border border-border/40 bg-background/50 px-5 py-6 text-sm text-muted-foreground shadow-sm">
                       <Loader2 className="h-4 w-4 animate-spin" />
                       正在读取系统状态...
                     </div>
                   ) : null}
 
-                  {hasAnySystemStatusData ? (
+                  {systemStatus ? (
                     <>
                       <div className="grid gap-6 xl:grid-cols-2">
                         <div className="rounded-2xl border border-border/40 bg-background/60 p-5 shadow-sm">
@@ -1696,16 +1562,14 @@ export function SystemSettingsPage({
                                   PostgreSQL
                                 </span>
                                 <span className={cn(SYSTEM_STATUS_BADGE_BASE_CLASS, 'border-blue-500/20 bg-blue-500/10 text-blue-600')}>
-                                  {hubSourceStatus ? `${formatRecordCount(hubSourceStatus.tableCount)} 张表` : '读取中'}
+                                  {formatRecordCount(systemStatus.hubSource.tableCount)} 张表
                                 </span>
-                              {hubSourceStatus ? (
-                                <div className="pointer-events-none absolute right-0 top-full z-20 mt-2 w-[320px] max-w-[min(320px,calc(100vw-3rem))] rounded-2xl border border-border/40 bg-background/95 p-4 text-xs opacity-0 shadow-2xl backdrop-blur-md transition-all duration-200 group-hover/tooltip:opacity-100 group-hover/tooltip:translate-y-1">
-                                  <div className="font-bold text-foreground">PostgreSQL 连接配置</div>
-                                  <div className="mt-2 break-all font-mono text-muted-foreground">
-                                    {hubSourceStatus.connectionDisplay}
-                                  </div>
+                              <div className="pointer-events-none absolute right-0 top-full z-20 mt-2 w-[320px] max-w-[min(320px,calc(100vw-3rem))] rounded-2xl border border-border/40 bg-background/95 p-4 text-xs opacity-0 shadow-2xl backdrop-blur-md transition-all duration-200 group-hover/tooltip:opacity-100 group-hover/tooltip:translate-y-1">
+                                <div className="font-bold text-foreground">PostgreSQL 连接配置</div>
+                                <div className="mt-2 break-all font-mono text-muted-foreground">
+                                  {systemStatus.hubSource.connectionDisplay}
                                 </div>
-                              ) : null}
+                              </div>
                             </div>
                           </div>
                           <div className="mt-5 overflow-hidden rounded-xl border border-border/40">
@@ -1714,31 +1578,17 @@ export function SystemSettingsPage({
                               <span className="text-right">记录数</span>
                             </div>
                             <div className="divide-y divide-border/40">
-                              {!hubSourceStatus && hubSourceLoading ? (
-                                <div className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                  正在读取 PostgreSQL 源表...
+                              {systemStatus.hubSource.tables.map((table) => (
+                                <div
+                                  key={table.name}
+                                  className="grid grid-cols-[minmax(0,1fr)_120px] items-center px-4 py-3 text-sm"
+                                >
+                                  <span className="truncate font-mono text-foreground">{table.name}</span>
+                                  <span className="text-right font-bold text-foreground">{formatRecordCount(table.rowCount)}</span>
                                 </div>
-                              ) : hubSourceStatus ? (
-                                hubSourceStatus.tables.map((table) => (
-                                  <div
-                                    key={table.name}
-                                    className="grid grid-cols-[minmax(0,1fr)_120px] items-center px-4 py-3 text-sm"
-                                  >
-                                    <span className="truncate font-mono text-foreground">{table.name}</span>
-                                    <span className="text-right font-bold text-foreground">{formatRecordCount(table.rowCount)}</span>
-                                  </div>
-                                ))
-                              ) : (
-                                <div className="px-4 py-6 text-sm text-muted-foreground">PostgreSQL 源表暂不可用。</div>
-                              )}
+                              ))}
                             </div>
                           </div>
-                          {hubSourceError ? (
-                            <div className="mt-4 rounded-xl border border-rose-500/20 bg-rose-500/5 px-4 py-3 text-xs font-medium text-rose-600">
-                              PostgreSQL 错误: {hubSourceError}
-                            </div>
-                          ) : null}
                         </div>
 
                         <div className="rounded-2xl border border-border/40 bg-background/60 p-5 shadow-sm">
@@ -1754,16 +1604,14 @@ export function SystemSettingsPage({
                                 SQLite
                               </span>
                               <span className={cn(SYSTEM_STATUS_BADGE_BASE_CLASS, 'border-amber-500/20 bg-amber-500/10 text-amber-600')}>
-                                {monitorDatabaseStatus ? `${formatRecordCount(monitorDatabaseStatus.tableCount)} 张表` : '读取中'}
+                                {formatRecordCount(systemStatus.monitorDatabase.tableCount)} 张表
                               </span>
-                              {monitorDatabaseStatus ? (
-                                <div className="pointer-events-none absolute right-0 top-full z-20 mt-2 w-[320px] max-w-[min(320px,calc(100vw-3rem))] rounded-2xl border border-border/40 bg-background/95 p-4 text-xs opacity-0 shadow-2xl backdrop-blur-md transition-all duration-200 group-hover/tooltip:opacity-100 group-hover/tooltip:translate-y-1">
-                                  <div className="font-bold text-foreground">SQLite 文件位置</div>
-                                  <div className="mt-2 break-all font-mono text-muted-foreground">
-                                    {monitorDatabaseStatus.path}
-                                  </div>
+                              <div className="pointer-events-none absolute right-0 top-full z-20 mt-2 w-[320px] max-w-[min(320px,calc(100vw-3rem))] rounded-2xl border border-border/40 bg-background/95 p-4 text-xs opacity-0 shadow-2xl backdrop-blur-md transition-all duration-200 group-hover/tooltip:opacity-100 group-hover/tooltip:translate-y-1">
+                                <div className="font-bold text-foreground">SQLite 文件位置</div>
+                                <div className="mt-2 break-all font-mono text-muted-foreground">
+                                  {systemStatus.monitorDatabase.path}
                                 </div>
-                              ) : null}
+                              </div>
                             </div>
                           </div>
                           <div className="mt-5 overflow-hidden rounded-xl border border-border/40">
@@ -1772,15 +1620,10 @@ export function SystemSettingsPage({
                               <span className="text-right">记录数</span>
                             </div>
                             <div className="divide-y divide-border/40">
-                              {!monitorDatabaseStatus && monitorDatabaseLoading ? (
-                                <div className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                  正在读取 SQLite 表...
-                                </div>
-                              ) : monitorDatabaseStatus?.tables.length === 0 ? (
+                              {systemStatus.monitorDatabase.tables.length === 0 ? (
                                 <div className="px-4 py-6 text-sm text-muted-foreground">当前 SQLite 中还没有业务表。</div>
-                              ) : monitorDatabaseStatus ? (
-                                monitorDatabaseStatus.tables.map((table) => (
+                              ) : (
+                                systemStatus.monitorDatabase.tables.map((table) => (
                                   <div
                                     key={table.name}
                                     className="grid grid-cols-[minmax(0,1fr)_120px] items-center px-4 py-3 text-sm"
@@ -1789,16 +1632,9 @@ export function SystemSettingsPage({
                                     <span className="text-right font-bold text-foreground">{formatRecordCount(table.rowCount)}</span>
                                   </div>
                                 ))
-                              ) : (
-                                <div className="px-4 py-6 text-sm text-muted-foreground">SQLite 状态暂不可用。</div>
                               )}
                             </div>
                           </div>
-                          {monitorDatabaseError ? (
-                            <div className="mt-4 rounded-xl border border-rose-500/20 bg-rose-500/5 px-4 py-3 text-xs font-medium text-rose-600">
-                              SQLite 错误: {monitorDatabaseError}
-                            </div>
-                          ) : null}
                         </div>
                       </div>
 
@@ -1814,26 +1650,24 @@ export function SystemSettingsPage({
                               <span
                                 className={cn(
                                   SYSTEM_STATUS_BADGE_BASE_CLASS,
-                                  !redisStatus?.enabled
+                                  !systemStatus.redis.enabled
                                     ? 'border border-muted-foreground/20 bg-muted/30 text-muted-foreground'
-                                    : redisStatus.connected
+                                    : systemStatus.redis.connected
                                       ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-600'
                                       : 'border-rose-500/20 bg-rose-500/10 text-rose-600',
                                 )}
                               >
-                                {!redisStatus
-                                  ? '读取中'
-                                  : !redisStatus.enabled
+                                {!systemStatus.redis.enabled
                                   ? '未启用'
-                                  : redisStatus.connected
+                                  : systemStatus.redis.connected
                                     ? '已连接'
                                     : '连接失败'}
                               </span>
-                              {redisStatus?.enabled && redisStatus.connected && redisStatus.connectionDisplay ? (
+                              {systemStatus.redis.enabled && systemStatus.redis.connected && systemStatus.redis.connectionDisplay ? (
                                 <div className="pointer-events-none absolute right-0 top-full z-20 mt-2 w-[320px] max-w-[min(320px,calc(100vw-3rem))] rounded-2xl border border-border/40 bg-background/95 p-4 text-xs opacity-0 shadow-2xl backdrop-blur-md transition-all duration-200 group-hover/tooltip:opacity-100 group-hover/tooltip:translate-y-1">
                                   <div className="font-bold text-foreground">Redis 配置</div>
                                   <div className="mt-2 break-all font-mono text-muted-foreground">
-                                    {redisStatus.connectionDisplay}
+                                    {systemStatus.redis.connectionDisplay}
                                   </div>
                                 </div>
                               ) : null}
@@ -1843,40 +1677,27 @@ export function SystemSettingsPage({
                           <div className="rounded-xl border border-border/40 bg-muted/20 p-4">
                             <div className="text-[11px] font-medium text-muted-foreground">Redis 启用状态</div>
                             <div className="mt-2 text-lg font-extrabold tracking-tight text-foreground">
-                              {!redisStatus && redisLoading ? '读取中' : redisStatus?.enabled ? '已配置' : '未配置'}
+                              {systemStatus.redis.enabled ? '已配置' : '未配置'}
                             </div>
                           </div>
                           <div className="rounded-xl border border-border/40 bg-muted/20 p-4">
                             <div className="text-[11px] font-medium text-muted-foreground">连接状态</div>
                             <div className="mt-2 text-lg font-extrabold tracking-tight text-foreground">
-                              {!redisStatus && redisLoading
-                                ? '读取中'
-                                : redisStatus?.enabled
-                                  ? (redisStatus.connected ? '正常' : '失败')
-                                  : '未启用'}
+                              {systemStatus.redis.enabled
+                                ? (systemStatus.redis.connected ? '正常' : '失败')
+                                : '未启用'}
                             </div>
                           </div>
                           <div className="rounded-xl border border-border/40 bg-muted/20 p-4">
                             <div className="text-[11px] font-medium text-muted-foreground">最后更新时间</div>
                             <div className="mt-2 text-sm font-bold text-foreground">
-                              {formatDateTime(redisStatus?.lastUpdatedAt ?? null)}
+                              {formatDateTime(systemStatus.redis.lastUpdatedAt)}
                             </div>
                           </div>
                         </div>
-                        {redisLoading && !redisStatus ? (
-                          <div className="mt-4 flex items-center gap-2 rounded-xl border border-border/40 bg-muted/20 px-4 py-3 text-xs font-medium text-muted-foreground">
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            正在读取 Redis 状态...
-                          </div>
-                        ) : null}
-                        {redisStatus?.errorMessage ? (
+                        {systemStatus.redis.errorMessage ? (
                           <div className="mt-4 rounded-xl border border-rose-500/20 bg-rose-500/5 px-4 py-3 text-xs font-medium text-rose-600">
-                            Redis 错误: {redisStatus.errorMessage}
-                          </div>
-                        ) : null}
-                        {redisError ? (
-                          <div className="mt-4 rounded-xl border border-rose-500/20 bg-rose-500/5 px-4 py-3 text-xs font-medium text-rose-600">
-                            Redis 读取失败: {redisError}
+                            Redis 错误: {systemStatus.redis.errorMessage}
                           </div>
                         ) : null}
                       </div>
