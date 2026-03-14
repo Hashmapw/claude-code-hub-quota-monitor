@@ -14,6 +14,8 @@ type UpdatePayload = {
   autoCleanupAfterRefreshEnabled?: boolean | null;
   dailyCheckinScheduleEnabled?: boolean | null;
   dailyCheckinScheduleTimes?: string[] | null;
+  balanceRefreshAnomalyThresholdPercent?: number | string | null;
+  balanceRefreshAnomalyVendorIds?: number[] | null;
 };
 
 export async function GET(): Promise<Response> {
@@ -51,6 +53,8 @@ export async function PUT(request: Request): Promise<Response> {
       autoCleanupAfterRefreshEnabled: body.autoCleanupAfterRefreshEnabled,
       dailyCheckinScheduleEnabled: body.dailyCheckinScheduleEnabled,
       dailyCheckinScheduleTimes: body.dailyCheckinScheduleTimes,
+      balanceRefreshAnomalyThresholdPercent: body.balanceRefreshAnomalyThresholdPercent,
+      balanceRefreshAnomalyVendorIds: body.balanceRefreshAnomalyVendorIds,
     });
 
     return NextResponse.json({

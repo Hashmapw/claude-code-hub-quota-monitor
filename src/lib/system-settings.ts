@@ -15,6 +15,9 @@ const MAX_REQUEST_TIMEOUT_MS = 120000;
 const DEFAULT_CONCURRENCY = 6;
 const MIN_CONCURRENCY = 1;
 const MAX_CONCURRENCY = 30;
+const DEFAULT_BALANCE_REFRESH_ANOMALY_THRESHOLD_PERCENT = 20;
+const MIN_BALANCE_REFRESH_ANOMALY_THRESHOLD_PERCENT = 0;
+const MAX_BALANCE_REFRESH_ANOMALY_THRESHOLD_PERCENT = 1000;
 
 export type SystemSettings = {
   systemDisplayName: string;
@@ -30,6 +33,8 @@ export type SystemSettings = {
   dailyCheckinScheduleEnabled: boolean;
   dailyCheckinScheduleTimes: string[];
   dailyCheckinLastRunAt: string | null;
+  balanceRefreshAnomalyThresholdPercent: number;
+  balanceRefreshAnomalyVendorIds: number[];
   updatedAt: string | null;
 };
 
@@ -45,6 +50,8 @@ type UpsertSystemSettingsInput = {
   autoCleanupAfterRefreshEnabled?: boolean | null;
   dailyCheckinScheduleEnabled?: boolean | null;
   dailyCheckinScheduleTimes?: string[] | null;
+  balanceRefreshAnomalyThresholdPercent?: number | string | null;
+  balanceRefreshAnomalyVendorIds?: number[] | null;
 };
 
 const SETTING_KEY_SYSTEM_DISPLAY_NAME = 'system_display_name';
@@ -60,6 +67,8 @@ const SETTING_KEY_AUTO_CLEANUP_AFTER_REFRESH_ENABLED = 'auto_cleanup_after_refre
 const SETTING_KEY_DAILY_CHECKIN_SCHEDULE_ENABLED = 'daily_checkin_schedule_enabled';
 const SETTING_KEY_DAILY_CHECKIN_SCHEDULE_TIMES = 'daily_checkin_schedule_times';
 const SETTING_KEY_DAILY_CHECKIN_LAST_RUN_AT = 'daily_checkin_last_run_at';
+const SETTING_KEY_BALANCE_REFRESH_ANOMALY_THRESHOLD_PERCENT = 'balance_refresh_anomaly_threshold_percent';
+const SETTING_KEY_BALANCE_REFRESH_ANOMALY_VENDOR_IDS = 'balance_refresh_anomaly_vendor_ids';
 const TIME_POINT_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 let dbInstance: DatabaseSync | null = null;
@@ -241,7 +250,73 @@ function parseDailyCheckinScheduleTimes(value: string | null): string[] {
   }
 }
 
-function getSettingValue(key: string): { value: string | null; updatedAt: string | null } {
+function parseVendorIdArray(value: string | null): number[] {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(normalized) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return Array.from(new Set(
+      parsed
+        .map((item) => Number(item))
+        .filter((item) => Number.isInteger(item) && item > 0),
+    ));
+  } catch {
+    return [];
+  }
+}
+
+function normalizeVendorIdArrayInput(value: number[] | null | undefined, fallback: number[]): number[] {
+  if (value === undefined) {
+    return fallback;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error('异常提醒服务商必须是数组');
+  }
+  return Array.from(new Set(
+    value
+      .map((item) => Number(item))
+      .filter((item) => Number.isInteger(item) && item > 0),
+  ));
+}
+
+function parseBalanceRefreshAnomalyThresholdPercent(value: string | null): number {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return DEFAULT_BALANCE_REFRESH_ANOMALY_THRESHOLD_PERCENT;
+  }
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed) || parsed < MIN_BALANCE_REFRESH_ANOMALY_THRESHOLD_PERCENT) {
+    return DEFAULT_BALANCE_REFRESH_ANOMALY_THRESHOLD_PERCENT;
+  }
+  return Math.max(
+    MIN_BALANCE_REFRESH_ANOMALY_THRESHOLD_PERCENT,
+    Math.min(MAX_BALANCE_REFRESH_ANOMALY_THRESHOLD_PERCENT, Math.round(parsed * 100) / 100),
+  );
+}
+
+function normalizeBalanceRefreshAnomalyThresholdPercentInput(
+  value: number | string | null | undefined,
+  fallback: number,
+): number {
+  if (value === undefined) {
+    return fallback;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < MIN_BALANCE_REFRESH_ANOMALY_THRESHOLD_PERCENT) {
+    throw new Error(`异常阈值必须在 ${MIN_BALANCE_REFRESH_ANOMALY_THRESHOLD_PERCENT}–${MAX_BALANCE_REFRESH_ANOMALY_THRESHOLD_PERCENT} 之间`);
+  }
+  return Math.max(
+    MIN_BALANCE_REFRESH_ANOMALY_THRESHOLD_PERCENT,
+    Math.min(MAX_BALANCE_REFRESH_ANOMALY_THRESHOLD_PERCENT, Math.round(parsed * 100) / 100),
+  );
+}
+
+export function getSystemSettingValue(key: string): { value: string | null; updatedAt: string | null } {
   const row = db()
     .prepare(
       `
@@ -266,7 +341,7 @@ function getSettingValue(key: string): { value: string | null; updatedAt: string
   };
 }
 
-function setSettingValue(key: string, value: string | null): void {
+export function setSystemSettingValue(key: string, value: string | null): void {
   db()
     .prepare(
       `
@@ -372,19 +447,21 @@ function resolveLatestUpdatedAt(...values: Array<string | null>): string | null 
 }
 
 export function getSystemSettings(): SystemSettings {
-  const systemDisplayName = getSettingValue(SETTING_KEY_SYSTEM_DISPLAY_NAME);
-  const proxy = getSettingValue(SETTING_KEY_PROXY_URL);
-  const docs = getSettingValue(SETTING_KEY_VENDOR_TYPE_DOCS);
-  const includeDisabled = getSettingValue(SETTING_KEY_INCLUDE_DISABLED);
-  const requestTimeout = getSettingValue(SETTING_KEY_REQUEST_TIMEOUT_MS);
-  const concurrencySetting = getSettingValue(SETTING_KEY_CONCURRENCY);
-  const autoRefreshEnabled = getSettingValue(SETTING_KEY_AUTO_REFRESH_ENABLED);
-  const autoRefreshInterval = getSettingValue(SETTING_KEY_AUTO_REFRESH_INTERVAL_MINUTES);
-  const autoRefreshLastRun = getSettingValue(SETTING_KEY_AUTO_REFRESH_LAST_RUN_AT);
-  const autoCleanupAfterRefreshEnabled = getSettingValue(SETTING_KEY_AUTO_CLEANUP_AFTER_REFRESH_ENABLED);
-  const dailyCheckinEnabled = getSettingValue(SETTING_KEY_DAILY_CHECKIN_SCHEDULE_ENABLED);
-  const dailyCheckinTimes = getSettingValue(SETTING_KEY_DAILY_CHECKIN_SCHEDULE_TIMES);
-  const dailyCheckinLastRun = getSettingValue(SETTING_KEY_DAILY_CHECKIN_LAST_RUN_AT);
+  const systemDisplayName = getSystemSettingValue(SETTING_KEY_SYSTEM_DISPLAY_NAME);
+  const proxy = getSystemSettingValue(SETTING_KEY_PROXY_URL);
+  const docs = getSystemSettingValue(SETTING_KEY_VENDOR_TYPE_DOCS);
+  const includeDisabled = getSystemSettingValue(SETTING_KEY_INCLUDE_DISABLED);
+  const requestTimeout = getSystemSettingValue(SETTING_KEY_REQUEST_TIMEOUT_MS);
+  const concurrencySetting = getSystemSettingValue(SETTING_KEY_CONCURRENCY);
+  const autoRefreshEnabled = getSystemSettingValue(SETTING_KEY_AUTO_REFRESH_ENABLED);
+  const autoRefreshInterval = getSystemSettingValue(SETTING_KEY_AUTO_REFRESH_INTERVAL_MINUTES);
+  const autoRefreshLastRun = getSystemSettingValue(SETTING_KEY_AUTO_REFRESH_LAST_RUN_AT);
+  const autoCleanupAfterRefreshEnabled = getSystemSettingValue(SETTING_KEY_AUTO_CLEANUP_AFTER_REFRESH_ENABLED);
+  const dailyCheckinEnabled = getSystemSettingValue(SETTING_KEY_DAILY_CHECKIN_SCHEDULE_ENABLED);
+  const dailyCheckinTimes = getSystemSettingValue(SETTING_KEY_DAILY_CHECKIN_SCHEDULE_TIMES);
+  const dailyCheckinLastRun = getSystemSettingValue(SETTING_KEY_DAILY_CHECKIN_LAST_RUN_AT);
+  const balanceRefreshAnomalyThreshold = getSystemSettingValue(SETTING_KEY_BALANCE_REFRESH_ANOMALY_THRESHOLD_PERCENT);
+  const balanceRefreshAnomalyVendorIds = getSystemSettingValue(SETTING_KEY_BALANCE_REFRESH_ANOMALY_VENDOR_IDS);
 
   return {
     systemDisplayName: normalizeSystemDisplayName(systemDisplayName.value),
@@ -400,6 +477,8 @@ export function getSystemSettings(): SystemSettings {
     dailyCheckinScheduleEnabled: parseBooleanSetting(dailyCheckinEnabled.value, false),
     dailyCheckinScheduleTimes: parseDailyCheckinScheduleTimes(dailyCheckinTimes.value),
     dailyCheckinLastRunAt: normalizeText(dailyCheckinLastRun.value),
+    balanceRefreshAnomalyThresholdPercent: parseBalanceRefreshAnomalyThresholdPercent(balanceRefreshAnomalyThreshold.value),
+    balanceRefreshAnomalyVendorIds: parseVendorIdArray(balanceRefreshAnomalyVendorIds.value),
     updatedAt: resolveLatestUpdatedAt(
       systemDisplayName.updatedAt,
       proxy.updatedAt,
@@ -411,6 +490,8 @@ export function getSystemSettings(): SystemSettings {
       dailyCheckinEnabled.updatedAt,
       dailyCheckinTimes.updatedAt,
       dailyCheckinLastRun.updatedAt,
+      balanceRefreshAnomalyThreshold.updatedAt,
+      balanceRefreshAnomalyVendorIds.updatedAt,
     ),
   };
 }
@@ -465,33 +546,48 @@ export function upsertSystemSettings(input: UpsertSystemSettingsInput): SystemSe
     input.dailyCheckinScheduleTimes === undefined
       ? current.dailyCheckinScheduleTimes
       : normalizeDailyCheckinScheduleTimes(input.dailyCheckinScheduleTimes ?? []);
+  const nextBalanceRefreshAnomalyThresholdPercent =
+    normalizeBalanceRefreshAnomalyThresholdPercentInput(
+      input.balanceRefreshAnomalyThresholdPercent,
+      current.balanceRefreshAnomalyThresholdPercent,
+    );
+  const nextBalanceRefreshAnomalyVendorIds =
+    normalizeVendorIdArrayInput(input.balanceRefreshAnomalyVendorIds, current.balanceRefreshAnomalyVendorIds);
   if (nextDailyCheckinScheduleEnabled && nextDailyCheckinScheduleTimes.length === 0) {
     throw new Error('已启用定时签到时，至少需要配置 1 个签到时间点');
   }
 
-  setSettingValue(SETTING_KEY_SYSTEM_DISPLAY_NAME, nextSystemDisplayName);
-  setSettingValue(SETTING_KEY_PROXY_URL, nextProxyUrl);
-  setSettingValue(SETTING_KEY_VENDOR_TYPE_DOCS, JSON.stringify(nextVendorTypeDocs));
-  setSettingValue(SETTING_KEY_INCLUDE_DISABLED, nextIncludeDisabled ? '1' : '0');
-  setSettingValue(SETTING_KEY_REQUEST_TIMEOUT_MS, String(nextRequestTimeoutMs));
-  setSettingValue(SETTING_KEY_CONCURRENCY, String(nextConcurrency));
-  setSettingValue(SETTING_KEY_AUTO_REFRESH_ENABLED, nextAutoRefreshEnabled ? '1' : '0');
-  setSettingValue(SETTING_KEY_AUTO_REFRESH_INTERVAL_MINUTES, String(nextAutoRefreshIntervalMinutes));
-  setSettingValue(
+  setSystemSettingValue(SETTING_KEY_SYSTEM_DISPLAY_NAME, nextSystemDisplayName);
+  setSystemSettingValue(SETTING_KEY_PROXY_URL, nextProxyUrl);
+  setSystemSettingValue(SETTING_KEY_VENDOR_TYPE_DOCS, JSON.stringify(nextVendorTypeDocs));
+  setSystemSettingValue(SETTING_KEY_INCLUDE_DISABLED, nextIncludeDisabled ? '1' : '0');
+  setSystemSettingValue(SETTING_KEY_REQUEST_TIMEOUT_MS, String(nextRequestTimeoutMs));
+  setSystemSettingValue(SETTING_KEY_CONCURRENCY, String(nextConcurrency));
+  setSystemSettingValue(SETTING_KEY_AUTO_REFRESH_ENABLED, nextAutoRefreshEnabled ? '1' : '0');
+  setSystemSettingValue(SETTING_KEY_AUTO_REFRESH_INTERVAL_MINUTES, String(nextAutoRefreshIntervalMinutes));
+  setSystemSettingValue(
     SETTING_KEY_AUTO_CLEANUP_AFTER_REFRESH_ENABLED,
     nextAutoCleanupAfterRefreshEnabled ? '1' : '0',
   );
-  setSettingValue(SETTING_KEY_DAILY_CHECKIN_SCHEDULE_ENABLED, nextDailyCheckinScheduleEnabled ? '1' : '0');
-  setSettingValue(SETTING_KEY_DAILY_CHECKIN_SCHEDULE_TIMES, JSON.stringify(nextDailyCheckinScheduleTimes));
+  setSystemSettingValue(SETTING_KEY_DAILY_CHECKIN_SCHEDULE_ENABLED, nextDailyCheckinScheduleEnabled ? '1' : '0');
+  setSystemSettingValue(SETTING_KEY_DAILY_CHECKIN_SCHEDULE_TIMES, JSON.stringify(nextDailyCheckinScheduleTimes));
+  setSystemSettingValue(
+    SETTING_KEY_BALANCE_REFRESH_ANOMALY_THRESHOLD_PERCENT,
+    String(nextBalanceRefreshAnomalyThresholdPercent),
+  );
+  setSystemSettingValue(
+    SETTING_KEY_BALANCE_REFRESH_ANOMALY_VENDOR_IDS,
+    JSON.stringify(nextBalanceRefreshAnomalyVendorIds),
+  );
   return getSystemSettings();
 }
 
 export function recordAutoRefreshRun(runAtIso?: string): void {
   const value = normalizeText(runAtIso) ?? new Date().toISOString();
-  setSettingValue(SETTING_KEY_AUTO_REFRESH_LAST_RUN_AT, value);
+  setSystemSettingValue(SETTING_KEY_AUTO_REFRESH_LAST_RUN_AT, value);
 }
 
 export function recordDailyCheckinScheduleRun(runAtIso?: string): void {
   const value = normalizeText(runAtIso) ?? new Date().toISOString();
-  setSettingValue(SETTING_KEY_DAILY_CHECKIN_LAST_RUN_AT, value);
+  setSystemSettingValue(SETTING_KEY_DAILY_CHECKIN_LAST_RUN_AT, value);
 }
