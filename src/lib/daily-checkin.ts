@@ -25,7 +25,7 @@ export function listDailyCheckinEnabledVendors(): DailyCheckinEnabledVendor[] {
     return [];
   }
 
-  const vendors = listVendorSettings()
+  return listVendorSettings()
     .filter((vendor): vendor is typeof vendor & { vendorType: string } =>
       vendor.vendorType !== null && enabledTypeMap.has(vendor.vendorType))
     .map((vendor) => ({
@@ -33,14 +33,5 @@ export function listDailyCheckinEnabledVendors(): DailyCheckinEnabledVendor[] {
       name: vendor.name,
       vendorType: vendor.vendorType,
       displayName: enabledTypeMap.get(vendor.vendorType) || vendor.vendorType,
-    }))
-    .sort((left, right) => {
-      const byName = left.name.localeCompare(right.name, 'zh-CN');
-      if (byName !== 0) {
-        return byName;
-      }
-      return left.id - right.id;
-    });
-
-  return vendors;
+    }));
 }
