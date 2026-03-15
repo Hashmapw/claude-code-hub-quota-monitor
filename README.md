@@ -45,8 +45,8 @@
 
 1. **统一看余额**：不再每家站点单独登录查询
 2. **自定义查询规则**：类型定义可导入/导出，社区共享
-3. **自动化运维**：每日签到、定时刷新、余额趋势追踪
-4. **自动恢复**：401 自动刷新 Token、403 自动破解挑战页、失败保留最后有效数据
+3. **自动化运维**：每日签到、定时刷新、余额趋势追踪，以及签到简报、余额刷新、异常提醒等主动通知
+4. **稳定运行可观测**：系统状态面板 + 自动恢复机制，支持查看 Hub 数据源、监控数据库、Redis 状态，并处理 401 Token 刷新、403 自动破解挑战页、失败保留最后有效数据
 
 ---
 
@@ -57,7 +57,9 @@
 - **类型定义管理**：Monaco 编辑器在线编辑规则，支持 JSON 导入导出，社区快速支持不同类型的供应商
 - **每日签到**：按服务商执行 checkin，带历史记录和奖励统计
 - **余额趋势**：支持 6h / 24h / 3d / 7d / 30d / 90d 时间范围的余额变化图表
-- **系统设置**：代理、自动刷新间隔、定时签到、并发控制
+- **系统状态面板**：查看 Hub 数据源、监控数据库、Redis 等关键依赖的健康状态，快速判断系统是否正常运行
+- **推送管理**：支持配置推送目标、任务开关，以及签到简报、签到后余额刷新、服务商消耗异常提醒
+- **系统设置**：代理、自动刷新间隔、定时签到、异常检测、并发控制，适合长期运行场景
 - **调试页**：每次查询的请求链路和响应摘要，快速定位问题
 - **管理员认证**：密码登录 + Session 管理，保护面板安全
 - **暗色模式**：跟随系统或手动切换
@@ -114,7 +116,27 @@ docker network create claude-code-hub-net-3gct
 docker compose -f docker-compose.yml --env-file .env up -d
 ```
 
-> 默认拉取 ghcr.io 上的预构建镜像。如需从源码构建，先安装 Node.js 22+ 并执行 `npm install && npm run build`，再运行 `docker compose -f docker-compose.yml --env-file .env up -d --build`。
+默认会拉取 `ghcr.io/hashmapw/claude-code-hub-quota-monitor` 上的预构建镜像。
+
+推荐在 `.env` 中固定镜像版本，便于回滚和升级：
+
+```bash
+IMAGE_NAME=ghcr.io/hashmapw/claude-code-hub-quota-monitor
+IMAGE_TAG=1.1.0
+```
+
+也可以先手动拉取镜像再启动：
+
+```bash
+docker pull ghcr.io/hashmapw/claude-code-hub-quota-monitor:1.1.0
+docker compose -f docker-compose.yml --env-file .env up -d
+```
+
+镜像包地址：
+
+- https://github.com/Hashmapw/claude-code-hub-quota-monitor/pkgs/container/claude-code-hub-quota-monitor
+
+如需从源码构建，先安装 Node.js 22+ 并执行 `npm install && npm run build`，再运行 `docker compose -f docker-compose.yml --env-file .env up -d --build`。
 
 **3) 访问**
 
@@ -208,9 +230,12 @@ npm run dev
 ## 📋 第一次配置（按顺序做）
 
 1. **确认数据库连通**：启动后首页能看到端点列表（状态为"未检查"是正常的）
-2. **导入类型定义**：去 **类型管理** 页面，导入对应站点的 JSON 规则（参考[类型定义](#类型定义)）
-3. **配置认证**：在控制台点击对应端点进入设置页，按站点要求填写 API Key / Cookie / AccessToken
-4. **刷新验证**：回首页点"刷新"，状态显示 `ok` 即链路通了
+2. **检查系统状态**：先到 **系统设置** 页面确认 Hub 数据源、监控数据库、Redis 状态是否正常
+3. **导入类型定义**：去 **类型管理** 页面，导入对应站点的 JSON 规则（参考[类型定义](#类型定义)）
+4. **配置认证**：在控制台点击对应端点进入设置页，按站点要求填写 API Key / Cookie / AccessToken
+5. **刷新验证**：回首页点"刷新"，状态显示 `ok` 即链路通了
+6. **配置签到与自动刷新**：在 **系统设置** 里按需开启自动刷新、定时签到和异常检测
+7. **配置推送通知**：如需主动提醒，在 **推送管理** 中绑定推送目标，并开启签到简报 / 余额刷新 / 异常提醒任务
 
 > 建议先拿 1 个端点测通，再批量铺开。
 
@@ -1150,6 +1175,7 @@ docker buildx create --name multiarch --use
 # 构建并推送
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
+  -t ghcr.io/hashmapw/claude-code-hub-quota-monitor:1.1.0 \
   -t ghcr.io/hashmapw/claude-code-hub-quota-monitor:latest \
   --push .
 ```
