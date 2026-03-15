@@ -25,6 +25,7 @@ type SchedulerState = {
   timer: NodeJS.Timeout | null;
   autoRefreshRunning: boolean;
   autoRefreshPromise: Promise<ScheduledRefreshSummary> | null;
+  autoRefreshStartedAtMs: number | null;
   dailyCheckinRunning: boolean;
   pendingDailyCheckinRun: boolean;
   lastAutoRefreshRunAtMs: number | null;
@@ -39,6 +40,7 @@ function getState(): SchedulerState {
       timer: null,
       autoRefreshRunning: false,
       autoRefreshPromise: null,
+      autoRefreshStartedAtMs: null,
       dailyCheckinRunning: false,
       pendingDailyCheckinRun: false,
       lastAutoRefreshRunAtMs: null,
@@ -367,6 +369,7 @@ function runRefreshPass(
   const startedAtMs = Date.now();
   const startedAtIso = new Date(startedAtMs).toISOString();
   state.autoRefreshRunning = true;
+  state.autoRefreshStartedAtMs = startedAtMs;
   logInfo('refresh.all', {
     event: 'start',
     trigger,
@@ -411,6 +414,7 @@ function runRefreshPass(
     } finally {
       state.autoRefreshRunning = false;
       state.autoRefreshPromise = null;
+      state.autoRefreshStartedAtMs = null;
     }
   })();
 
@@ -418,8 +422,21 @@ function runRefreshPass(
   return runPromise;
 }
 
-async function runPostCheckinBalanceRefresh(state: SchedulerState): Promise<ScheduledRefreshSummary> {
-  return runRefreshPass(state, 'scheduled_checkin_push');
+async function runPostCheckinBalanceRefresh(
+  state: SchedulerState,
+  checkinFinishedAtMs: number,
+): Promise<ScheduledRefreshSummary> {
+  while (true) {
+    const activePromise = state.autoRefreshPromise;
+    const activeStartedAtMs = state.autoRefreshStartedAtMs;
+    if (!activePromise) {
+      return runRefreshPass(state, 'scheduled_checkin_push');
+    }
+    if (activeStartedAtMs !== null && activeStartedAtMs >= checkinFinishedAtMs) {
+      return activePromise;
+    }
+    await activePromise;
+  }
 }
 
 async function maybeDispatchBalanceRefreshAnomalyAlert(input: {
@@ -519,7 +536,10 @@ async function maybeRunDailyCheckin(state: SchedulerState): Promise<void> {
       );
 
       if (getEnabledPushTargetsForTask('daily_checkin_balance_refresh').length > 0) {
-        const refreshSummary = await runPostCheckinBalanceRefresh(state);
+        const refreshSummary = await runPostCheckinBalanceRefresh(
+          state,
+          parseIsoMs(result.finishedAt) ?? Date.now(),
+        );
         await dispatchPushTaskMessage(
           'daily_checkin_balance_refresh',
           buildBalanceRefreshMessage(refreshSummary),
