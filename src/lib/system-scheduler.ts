@@ -24,6 +24,7 @@ type SchedulerState = {
   started: boolean;
   timer: NodeJS.Timeout | null;
   autoRefreshRunning: boolean;
+  autoRefreshPromise: Promise<ScheduledRefreshSummary> | null;
   dailyCheckinRunning: boolean;
   pendingDailyCheckinRun: boolean;
   lastAutoRefreshRunAtMs: number | null;
@@ -37,6 +38,7 @@ function getState(): SchedulerState {
       started: false,
       timer: null,
       autoRefreshRunning: false,
+      autoRefreshPromise: null,
       dailyCheckinRunning: false,
       pendingDailyCheckinRun: false,
       lastAutoRefreshRunAtMs: null,
@@ -328,7 +330,7 @@ async function maybeRunAutoRefresh(state: SchedulerState): Promise<void> {
   if (!settings.autoRefreshEnabled) {
     return;
   }
-  if (state.autoRefreshRunning) {
+  if (state.autoRefreshPromise) {
     return;
   }
 
@@ -345,116 +347,79 @@ async function maybeRunAutoRefresh(state: SchedulerState): Promise<void> {
     return;
   }
 
-  state.autoRefreshRunning = true;
-  logInfo('refresh.all', {
-    event: 'start',
-    trigger: 'scheduled',
-  });
-  const startedAt = Date.now();
-  const startedAtIso = new Date(startedAt).toISOString();
-  try {
-    const records = await refreshAllEndpoints('scheduled_refresh_all');
-    const finishedAtIso = new Date().toISOString();
-    let success = 0;
-    let failed = 0;
-    for (const record of records) {
-      if (record.result.status === 'ok') {
-        success += 1;
-      } else {
-        failed += 1;
-      }
-    }
-    logInfo('refresh.all', {
-      event: 'done',
-      trigger: 'scheduled',
-      total: records.length,
-      success,
-      failed,
-      durationMs: Date.now() - startedAt,
-    });
+  const summary = await runRefreshPass(state, 'scheduled');
+  if (!summary.isFailure) {
     await maybeDispatchBalanceRefreshAnomalyAlert({
-      startedAt: startedAtIso,
-      finishedAt: finishedAtIso,
+      startedAt: summary.startedAt,
+      finishedAt: summary.finishedAt,
     });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logInfo('refresh.all', {
-      event: 'failed',
-      trigger: 'scheduled',
-      durationMs: Date.now() - startedAt,
-      message,
-    });
-    // Ignore scheduler task errors to keep next ticks alive.
-  } finally {
-    const finishedAt = new Date().toISOString();
-    state.lastAutoRefreshRunAtMs = parseIsoMs(finishedAt);
-    recordAutoRefreshRun(finishedAt);
-    state.autoRefreshRunning = false;
   }
 }
 
-async function runPostCheckinBalanceRefresh(state: SchedulerState): Promise<ScheduledRefreshSummary> {
-  const startedAtMs = Date.now();
-  const startedAtIso = new Date(startedAtMs).toISOString();
-
-  if (state.autoRefreshRunning) {
-    return {
-      total: 0,
-      success: 0,
-      failed: 0,
-      withValue: 0,
-      detailRows: [],
-      startedAt: startedAtIso,
-      finishedAt: new Date().toISOString(),
-      isFailure: true,
-      failureMessage: '已有自动刷新任务在执行，已跳过本次签到后的强制刷新。',
-    };
+function runRefreshPass(
+  state: SchedulerState,
+  trigger: 'scheduled' | 'scheduled_checkin_push',
+): Promise<ScheduledRefreshSummary> {
+  if (state.autoRefreshPromise) {
+    return state.autoRefreshPromise;
   }
 
+  const startedAtMs = Date.now();
+  const startedAtIso = new Date(startedAtMs).toISOString();
   state.autoRefreshRunning = true;
   logInfo('refresh.all', {
     event: 'start',
-    trigger: 'scheduled_checkin_push',
+    trigger,
   });
 
-  try {
-    const records = await refreshAllEndpoints('scheduled_refresh_all');
-    const finishedAtIso = new Date().toISOString();
-    const summary = summarizeRefreshRecords(records, startedAtIso, finishedAtIso);
-    logInfo('refresh.all', {
-      event: 'done',
-      trigger: 'scheduled_checkin_push',
-      total: summary.total,
-      success: summary.success,
-      failed: summary.failed,
-      withValue: summary.withValue,
-      durationMs: Date.now() - startedAtMs,
-    });
-    state.lastAutoRefreshRunAtMs = parseIsoMs(finishedAtIso);
-    recordAutoRefreshRun(finishedAtIso);
-    return summary;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logInfo('refresh.all', {
-      event: 'failed',
-      trigger: 'scheduled_checkin_push',
-      durationMs: Date.now() - startedAtMs,
-      message,
-    });
-    return {
-      total: 0,
-      success: 0,
-      failed: 0,
-      withValue: 0,
-      detailRows: [],
-      startedAt: startedAtIso,
-      finishedAt: new Date().toISOString(),
-      isFailure: true,
-      failureMessage: message,
-    };
-  } finally {
-    state.autoRefreshRunning = false;
-  }
+  const runPromise = (async (): Promise<ScheduledRefreshSummary> => {
+    try {
+      const records = await refreshAllEndpoints('scheduled_refresh_all');
+      const finishedAtIso = new Date().toISOString();
+      const summary = summarizeRefreshRecords(records, startedAtIso, finishedAtIso);
+      logInfo('refresh.all', {
+        event: 'done',
+        trigger,
+        total: summary.total,
+        success: summary.success,
+        failed: summary.failed,
+        withValue: summary.withValue,
+        durationMs: Date.now() - startedAtMs,
+      });
+      state.lastAutoRefreshRunAtMs = parseIsoMs(finishedAtIso);
+      recordAutoRefreshRun(finishedAtIso);
+      return summary;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logInfo('refresh.all', {
+        event: 'failed',
+        trigger,
+        durationMs: Date.now() - startedAtMs,
+        message,
+      });
+      return {
+        total: 0,
+        success: 0,
+        failed: 0,
+        withValue: 0,
+        detailRows: [],
+        startedAt: startedAtIso,
+        finishedAt: new Date().toISOString(),
+        isFailure: true,
+        failureMessage: message,
+      };
+    } finally {
+      state.autoRefreshRunning = false;
+      state.autoRefreshPromise = null;
+    }
+  })();
+
+  state.autoRefreshPromise = runPromise;
+  return runPromise;
+}
+
+async function runPostCheckinBalanceRefresh(state: SchedulerState): Promise<ScheduledRefreshSummary> {
+  return runRefreshPass(state, 'scheduled_checkin_push');
 }
 
 async function maybeDispatchBalanceRefreshAnomalyAlert(input: {
