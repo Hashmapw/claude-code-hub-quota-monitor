@@ -42,6 +42,17 @@ export type VendorBalanceHistoryPayload = {
   hubDailyUsage: HubDailyUsageStat[];
 };
 
+export type VendorDailyUsageComparison = {
+  vendorId: number;
+  vendorName: string;
+  vendorType: string | null;
+  dateKey: string;
+  usedDelta: number;
+  hubCostUsd: number;
+  differenceUsd: number;
+  excessPercent: number | null;
+};
+
 export type VendorBalanceHistorySnapshotInput = {
   vendorId: number;
   vendorName: string;
@@ -82,7 +93,7 @@ function normalizeRange(value: string | null | undefined): VendorBalanceHistoryR
   if (['6h', '24h', '3d', '7d', '30d', '90d', 'all'].includes(normalized)) {
     return normalized as VendorBalanceHistoryRange;
   }
-  return '30d';
+  return '24h';
 }
 
 function rangeStartIso(range: VendorBalanceHistoryRange, now = new Date()): string | null {
@@ -99,6 +110,51 @@ function rangeStartIso(range: VendorBalanceHistoryRange, now = new Date()): stri
     start.setDate(start.getDate() - days);
   }
   return start.toISOString();
+}
+
+function formatShanghaiDateKey(value: Date | string): string {
+  const date = value instanceof Date ? value : new Date(value);
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
+function shanghaiDayStartIso(now = new Date()): string {
+  const dayKey = formatShanghaiDateKey(now).replace(/\//g, '-');
+  return new Date(`${dayKey}T00:00:00+08:00`).toISOString();
+}
+
+function sumMonotonicSegments(values: number[], direction: 'increase' | 'decrease'): number {
+  if (values.length <= 1) {
+    return 0;
+  }
+
+  let segmentStart = values[0];
+  let previousValue = values[0];
+  let total = 0;
+
+  for (let index = 1; index < values.length; index += 1) {
+    const currentValue = values[index];
+    const keepsDirection =
+      direction === 'increase'
+        ? currentValue >= previousValue
+        : currentValue <= previousValue;
+
+    if (keepsDirection) {
+      previousValue = currentValue;
+      continue;
+    }
+
+    total += direction === 'increase' ? previousValue - segmentStart : segmentStart - previousValue;
+    segmentStart = currentValue;
+    previousValue = currentValue;
+  }
+
+  total += direction === 'increase' ? previousValue - segmentStart : segmentStart - previousValue;
+  return total;
 }
 
 function ensureTable(): void {
@@ -433,6 +489,38 @@ function listMappedEndpointIdsForVendor(vendorId: number): number[] {
     .filter((endpointId) => Number.isInteger(endpointId) && endpointId > 0);
 }
 
+function findLatestVendorBalanceHistoryPointBefore(
+  vendorId: number,
+  beforeIso: string,
+): VendorBalanceHistoryPoint | null {
+  ensureTable();
+  const normalizedVendorId = Number(vendorId);
+  if (!Number.isInteger(normalizedVendorId) || normalizedVendorId <= 0) {
+    return null;
+  }
+
+  const row = getSqliteConnection()
+    .prepare(`
+      SELECT
+        id,
+        vendor_id,
+        vendor_name,
+        vendor_type,
+        remaining_usd,
+        used_usd,
+        checked_at,
+        source_scope,
+        created_at
+      FROM vendor_balance_history
+      WHERE vendor_id = ? AND checked_at < ?
+      ORDER BY checked_at DESC, id DESC
+      LIMIT 1
+    `)
+    .get(normalizedVendorId, beforeIso) as VendorBalanceHistoryRow | undefined;
+
+  return row ? mapRow(row) : null;
+}
+
 export async function getVendorBalanceHistoryHubDailyUsage(
   preferredVendorId?: number | null,
   rangeInput?: string | null,
@@ -443,6 +531,68 @@ export async function getVendorBalanceHistoryHubDailyUsage(
   }
 
   return listHubDailyUsageStats(listMappedEndpointIdsForVendor(vendorId), rangeStartIso(normalizeRange(rangeInput)));
+}
+
+export async function getVendorDailyUsageComparisons(
+  vendorIds: number[],
+  now = new Date(),
+): Promise<VendorDailyUsageComparison[]> {
+  const normalizedVendorIds = Array.from(new Set(
+    vendorIds
+      .map((item) => Number(item))
+      .filter((item) => Number.isInteger(item) && item > 0),
+  ));
+  if (normalizedVendorIds.length === 0) {
+    return [];
+  }
+
+  const vendorMap = new Map(listVendorBalanceHistoryVendors().map((item) => [item.id, item] as const));
+  const todayKey = formatShanghaiDateKey(now);
+  const todayStartIso = shanghaiDayStartIso(now);
+  const results: VendorDailyUsageComparison[] = [];
+
+  for (const vendorId of normalizedVendorIds) {
+    const endpointIds = listMappedEndpointIdsForVendor(vendorId);
+    if (endpointIds.length === 0) {
+      continue;
+    }
+
+    const points = listVendorBalanceHistoryPoints(vendorId, '24h')
+      .filter((point) => formatShanghaiDateKey(point.checkedAt) === todayKey);
+    const baselinePoint = findLatestVendorBalanceHistoryPointBefore(vendorId, todayStartIso);
+    const usedValues = [
+      baselinePoint?.usedUsd ?? null,
+      ...points.map((point) => point.usedUsd),
+    ]
+      .filter((value): value is number => hasFiniteNumber(value));
+    if (usedValues.length === 0) {
+      continue;
+    }
+
+    const usedDelta = roundUsd(sumMonotonicSegments(usedValues, 'increase'));
+    const hubDailyUsage = await listHubDailyUsageStats(endpointIds, rangeStartIso('24h', now));
+    const hubToday = hubDailyUsage.find((item) => item.dateKey === todayKey) ?? null;
+    const hubCostUsd = roundUsd(hubToday?.totalCostUsd ?? 0);
+    const differenceUsd = roundUsd(usedDelta - hubCostUsd);
+    const excessPercent = hubCostUsd > 0
+      ? Math.round((differenceUsd / hubCostUsd) * 10000) / 100
+      : null;
+    const vendor = vendorMap.get(vendorId) ?? null;
+    const fallbackPoint = points[points.length - 1] ?? null;
+
+    results.push({
+      vendorId,
+      vendorName: vendor?.name ?? fallbackPoint?.vendorName ?? `服务商 ${vendorId}`,
+      vendorType: vendor?.vendorType ?? fallbackPoint?.vendorType ?? null,
+      dateKey: todayKey,
+      usedDelta,
+      hubCostUsd,
+      differenceUsd,
+      excessPercent,
+    });
+  }
+
+  return results.sort((left, right) => right.differenceUsd - left.differenceUsd);
 }
 
 export async function getVendorBalanceHistoryPayload(
