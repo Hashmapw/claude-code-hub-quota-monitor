@@ -122,6 +122,11 @@ function formatShanghaiDateKey(value: Date | string): string {
   }).format(date);
 }
 
+function shanghaiDayStartIso(now = new Date()): string {
+  const dayKey = formatShanghaiDateKey(now).replace(/\//g, '-');
+  return new Date(`${dayKey}T00:00:00+08:00`).toISOString();
+}
+
 function sumMonotonicSegments(values: number[], direction: 'increase' | 'decrease'): number {
   if (values.length <= 1) {
     return 0;
@@ -484,6 +489,38 @@ function listMappedEndpointIdsForVendor(vendorId: number): number[] {
     .filter((endpointId) => Number.isInteger(endpointId) && endpointId > 0);
 }
 
+function findLatestVendorBalanceHistoryPointBefore(
+  vendorId: number,
+  beforeIso: string,
+): VendorBalanceHistoryPoint | null {
+  ensureTable();
+  const normalizedVendorId = Number(vendorId);
+  if (!Number.isInteger(normalizedVendorId) || normalizedVendorId <= 0) {
+    return null;
+  }
+
+  const row = getSqliteConnection()
+    .prepare(`
+      SELECT
+        id,
+        vendor_id,
+        vendor_name,
+        vendor_type,
+        remaining_usd,
+        used_usd,
+        checked_at,
+        source_scope,
+        created_at
+      FROM vendor_balance_history
+      WHERE vendor_id = ? AND checked_at < ?
+      ORDER BY checked_at DESC, id DESC
+      LIMIT 1
+    `)
+    .get(normalizedVendorId, beforeIso) as VendorBalanceHistoryRow | undefined;
+
+  return row ? mapRow(row) : null;
+}
+
 export async function getVendorBalanceHistoryHubDailyUsage(
   preferredVendorId?: number | null,
   rangeInput?: string | null,
@@ -511,6 +548,7 @@ export async function getVendorDailyUsageComparisons(
 
   const vendorMap = new Map(listVendorBalanceHistoryVendors().map((item) => [item.id, item] as const));
   const todayKey = formatShanghaiDateKey(now);
+  const todayStartIso = shanghaiDayStartIso(now);
   const results: VendorDailyUsageComparison[] = [];
 
   for (const vendorId of normalizedVendorIds) {
@@ -521,8 +559,11 @@ export async function getVendorDailyUsageComparisons(
 
     const points = listVendorBalanceHistoryPoints(vendorId, '24h')
       .filter((point) => formatShanghaiDateKey(point.checkedAt) === todayKey);
-    const usedValues = points
-      .map((point) => point.usedUsd)
+    const baselinePoint = findLatestVendorBalanceHistoryPointBefore(vendorId, todayStartIso);
+    const usedValues = [
+      baselinePoint?.usedUsd ?? null,
+      ...points.map((point) => point.usedUsd),
+    ]
       .filter((value): value is number => hasFiniteNumber(value));
     if (usedValues.length === 0) {
       continue;
