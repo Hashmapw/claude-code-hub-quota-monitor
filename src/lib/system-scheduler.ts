@@ -201,13 +201,15 @@ function summarizeRefreshRecords(records: QuotaRecord[], startedAtIso: string, f
 
   for (const record of records) {
     const vendorId = Number.isInteger(record.vendorId) && Number(record.vendorId) > 0 ? Number(record.vendorId) : null;
-    const vendorName = (record.vendorName || '').trim() || record.endpointName;
-    const groupKey = vendorId !== null ? `vendor:${vendorId}` : `endpoint:${record.endpointId}`;
-    const orderIndex = vendorId !== null ? (vendorOrderMap.get(vendorId) ?? Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER;
+    const endpointName = (record.endpointName || '').trim() || `端点 ${record.endpointId}`;
+    const vendorName = (record.vendorName || '').trim();
+    const useVendorGroup = record.useVendorGroup && vendorId !== null;
+    const groupKey = useVendorGroup ? `vendor:${vendorId}` : `endpoint:${record.endpointId}`;
+    const orderIndex = useVendorGroup ? (vendorOrderMap.get(vendorId) ?? Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER;
     if (!grouped.has(groupKey)) {
       grouped.set(groupKey, {
         vendorId,
-        vendorName,
+        vendorName: useVendorGroup ? (vendorName || endpointName) : endpointName,
         orderIndex,
         details: [],
       });
@@ -215,8 +217,8 @@ function summarizeRefreshRecords(records: QuotaRecord[], startedAtIso: string, f
 
     const remainingUsd = extractRemainingUsd(record);
     const detail = record.result.status === 'ok'
-      ? `${record.endpointName}：${remainingUsd !== null ? `余额 ${formatUsd(remainingUsd)} USD` : '刷新成功，暂无余额值'}`
-      : `${record.endpointName}：刷新失败 · ${normalizeMessage(record.result.message) ?? summarizeStatus(record.result.status)}`;
+      ? `${endpointName}：${remainingUsd !== null ? `余额 ${formatUsd(remainingUsd)} USD` : '刷新成功，暂无余额值'}`
+      : `${endpointName}：刷新失败 · ${normalizeMessage(record.result.message) ?? summarizeStatus(record.result.status)}`;
     grouped.get(groupKey)!.details.push(detail);
   }
 
