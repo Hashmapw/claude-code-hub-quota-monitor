@@ -371,14 +371,6 @@ function HistoryLineChart({
     };
   }, []);
 
-  if (points.length === 0) {
-    return (
-      <div className="flex h-[320px] items-center justify-center rounded-2xl border border-dashed border-border/70 bg-muted/20 text-sm text-muted-foreground">
-        暂无历史数据，请先执行一次刷新。
-      </div>
-    );
-  }
-
   const chartConfig = {
     remaining: {
       label: '服务商余额',
@@ -393,7 +385,11 @@ function HistoryLineChart({
   return (
     <div>
       <div ref={containerRef} className="rounded-2xl border border-border/60 bg-background px-1 py-4 sm:p-6">
-        {!hasVisibleSeries ? (
+        {points.length === 0 ? (
+          <div className="flex h-[320px] items-center justify-center rounded-2xl border border-dashed border-border/70 bg-muted/20 text-sm text-muted-foreground">
+            暂无历史数据，请先执行一次刷新。
+          </div>
+        ) : !hasVisibleSeries ? (
           <div className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">
             请至少显示一条曲线。
           </div>
