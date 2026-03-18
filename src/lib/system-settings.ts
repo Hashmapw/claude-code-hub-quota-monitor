@@ -15,6 +15,9 @@ const MAX_REQUEST_TIMEOUT_MS = 120000;
 const DEFAULT_CONCURRENCY = 6;
 const MIN_CONCURRENCY = 1;
 const MAX_CONCURRENCY = 30;
+const DEFAULT_NETWORK_ERROR_ALERT_CONSECUTIVE_THRESHOLD = 3;
+const MIN_NETWORK_ERROR_ALERT_CONSECUTIVE_THRESHOLD = 1;
+const MAX_NETWORK_ERROR_ALERT_CONSECUTIVE_THRESHOLD = 1000;
 const DEFAULT_BALANCE_REFRESH_ANOMALY_THRESHOLD_PERCENT = 20;
 const MIN_BALANCE_REFRESH_ANOMALY_THRESHOLD_PERCENT = 0;
 const MAX_BALANCE_REFRESH_ANOMALY_THRESHOLD_PERCENT = 1000;
@@ -33,6 +36,7 @@ export type SystemSettings = {
   dailyCheckinScheduleEnabled: boolean;
   dailyCheckinScheduleTimes: string[];
   dailyCheckinLastRunAt: string | null;
+  networkErrorAlertConsecutiveThreshold: number;
   balanceRefreshAnomalyThresholdPercent: number;
   balanceRefreshAnomalyVendorIds: number[];
   updatedAt: string | null;
@@ -50,6 +54,7 @@ type UpsertSystemSettingsInput = {
   autoCleanupAfterRefreshEnabled?: boolean | null;
   dailyCheckinScheduleEnabled?: boolean | null;
   dailyCheckinScheduleTimes?: string[] | null;
+  networkErrorAlertConsecutiveThreshold?: number | string | null;
   balanceRefreshAnomalyThresholdPercent?: number | string | null;
   balanceRefreshAnomalyVendorIds?: number[] | null;
 };
@@ -67,6 +72,7 @@ const SETTING_KEY_AUTO_CLEANUP_AFTER_REFRESH_ENABLED = 'auto_cleanup_after_refre
 const SETTING_KEY_DAILY_CHECKIN_SCHEDULE_ENABLED = 'daily_checkin_schedule_enabled';
 const SETTING_KEY_DAILY_CHECKIN_SCHEDULE_TIMES = 'daily_checkin_schedule_times';
 const SETTING_KEY_DAILY_CHECKIN_LAST_RUN_AT = 'daily_checkin_last_run_at';
+const SETTING_KEY_NETWORK_ERROR_ALERT_CONSECUTIVE_THRESHOLD = 'network_error_alert_consecutive_threshold';
 const SETTING_KEY_BALANCE_REFRESH_ANOMALY_THRESHOLD_PERCENT = 'balance_refresh_anomaly_threshold_percent';
 const SETTING_KEY_BALANCE_REFRESH_ANOMALY_VENDOR_IDS = 'balance_refresh_anomaly_vendor_ids';
 const TIME_POINT_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -236,6 +242,36 @@ function normalizeDailyCheckinScheduleTimes(
     deduped.add(normalized);
   }
   return Array.from(deduped).sort((left, right) => left.localeCompare(right));
+}
+
+function parseNetworkErrorAlertConsecutiveThreshold(value: string | null): number {
+  const parsed = Number(normalizeText(value));
+  if (!Number.isFinite(parsed) || parsed < MIN_NETWORK_ERROR_ALERT_CONSECUTIVE_THRESHOLD) {
+    return DEFAULT_NETWORK_ERROR_ALERT_CONSECUTIVE_THRESHOLD;
+  }
+  return Math.max(
+    MIN_NETWORK_ERROR_ALERT_CONSECUTIVE_THRESHOLD,
+    Math.min(MAX_NETWORK_ERROR_ALERT_CONSECUTIVE_THRESHOLD, Math.trunc(parsed)),
+  );
+}
+
+function normalizeNetworkErrorAlertConsecutiveThresholdInput(
+  value: number | string | null | undefined,
+  fallback: number,
+): number {
+  if (value === undefined) {
+    return fallback;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < MIN_NETWORK_ERROR_ALERT_CONSECUTIVE_THRESHOLD) {
+    throw new Error(
+      `网络异常连续阈值必须在 ${MIN_NETWORK_ERROR_ALERT_CONSECUTIVE_THRESHOLD}–${MAX_NETWORK_ERROR_ALERT_CONSECUTIVE_THRESHOLD} 之间`,
+    );
+  }
+  return Math.max(
+    MIN_NETWORK_ERROR_ALERT_CONSECUTIVE_THRESHOLD,
+    Math.min(MAX_NETWORK_ERROR_ALERT_CONSECUTIVE_THRESHOLD, Math.trunc(parsed)),
+  );
 }
 
 function parseDailyCheckinScheduleTimes(value: string | null): string[] {
@@ -460,6 +496,7 @@ export function getSystemSettings(): SystemSettings {
   const dailyCheckinEnabled = getSystemSettingValue(SETTING_KEY_DAILY_CHECKIN_SCHEDULE_ENABLED);
   const dailyCheckinTimes = getSystemSettingValue(SETTING_KEY_DAILY_CHECKIN_SCHEDULE_TIMES);
   const dailyCheckinLastRun = getSystemSettingValue(SETTING_KEY_DAILY_CHECKIN_LAST_RUN_AT);
+  const networkErrorAlertConsecutiveThreshold = getSystemSettingValue(SETTING_KEY_NETWORK_ERROR_ALERT_CONSECUTIVE_THRESHOLD);
   const balanceRefreshAnomalyThreshold = getSystemSettingValue(SETTING_KEY_BALANCE_REFRESH_ANOMALY_THRESHOLD_PERCENT);
   const balanceRefreshAnomalyVendorIds = getSystemSettingValue(SETTING_KEY_BALANCE_REFRESH_ANOMALY_VENDOR_IDS);
 
@@ -477,6 +514,7 @@ export function getSystemSettings(): SystemSettings {
     dailyCheckinScheduleEnabled: parseBooleanSetting(dailyCheckinEnabled.value, false),
     dailyCheckinScheduleTimes: parseDailyCheckinScheduleTimes(dailyCheckinTimes.value),
     dailyCheckinLastRunAt: normalizeText(dailyCheckinLastRun.value),
+    networkErrorAlertConsecutiveThreshold: parseNetworkErrorAlertConsecutiveThreshold(networkErrorAlertConsecutiveThreshold.value),
     balanceRefreshAnomalyThresholdPercent: parseBalanceRefreshAnomalyThresholdPercent(balanceRefreshAnomalyThreshold.value),
     balanceRefreshAnomalyVendorIds: parseVendorIdArray(balanceRefreshAnomalyVendorIds.value),
     updatedAt: resolveLatestUpdatedAt(
@@ -490,6 +528,7 @@ export function getSystemSettings(): SystemSettings {
       dailyCheckinEnabled.updatedAt,
       dailyCheckinTimes.updatedAt,
       dailyCheckinLastRun.updatedAt,
+      networkErrorAlertConsecutiveThreshold.updatedAt,
       balanceRefreshAnomalyThreshold.updatedAt,
       balanceRefreshAnomalyVendorIds.updatedAt,
     ),
@@ -546,6 +585,11 @@ export function upsertSystemSettings(input: UpsertSystemSettingsInput): SystemSe
     input.dailyCheckinScheduleTimes === undefined
       ? current.dailyCheckinScheduleTimes
       : normalizeDailyCheckinScheduleTimes(input.dailyCheckinScheduleTimes ?? []);
+  const nextNetworkErrorAlertConsecutiveThreshold =
+    normalizeNetworkErrorAlertConsecutiveThresholdInput(
+      input.networkErrorAlertConsecutiveThreshold,
+      current.networkErrorAlertConsecutiveThreshold,
+    );
   const nextBalanceRefreshAnomalyThresholdPercent =
     normalizeBalanceRefreshAnomalyThresholdPercentInput(
       input.balanceRefreshAnomalyThresholdPercent,
@@ -571,6 +615,10 @@ export function upsertSystemSettings(input: UpsertSystemSettingsInput): SystemSe
   );
   setSystemSettingValue(SETTING_KEY_DAILY_CHECKIN_SCHEDULE_ENABLED, nextDailyCheckinScheduleEnabled ? '1' : '0');
   setSystemSettingValue(SETTING_KEY_DAILY_CHECKIN_SCHEDULE_TIMES, JSON.stringify(nextDailyCheckinScheduleTimes));
+  setSystemSettingValue(
+    SETTING_KEY_NETWORK_ERROR_ALERT_CONSECUTIVE_THRESHOLD,
+    String(nextNetworkErrorAlertConsecutiveThreshold),
+  );
   setSystemSettingValue(
     SETTING_KEY_BALANCE_REFRESH_ANOMALY_THRESHOLD_PERCENT,
     String(nextBalanceRefreshAnomalyThresholdPercent),

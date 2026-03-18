@@ -39,7 +39,6 @@ import {
 } from '@/lib/group-collapse-state';
 import { toast } from '@/lib/toast';
 import { cn, formatDateTime, formatUsd, resolveDefaultVendorType } from '@/lib/utils';
-import { setCookieAlerts } from '@/lib/client/cookie-alert-store';
 
 type VendorOption = {
   id: number;
@@ -2729,13 +2728,6 @@ export function QuotaDashboard({
     }));
   };
 
-  const syncCookieAlerts = (records: QuotaRecord[]) => {
-    const expired = records
-      .filter((r) => r.result.credentialIssue === 'cookie_expired')
-      .map((r) => ({ endpointId: r.endpointId, endpointName: r.endpointName }));
-    setCookieAlerts(expired);
-  };
-
   const applyRefreshedRecords = (
     records: QuotaRecord[],
     meta?: QuotaApiResponse['meta'],
@@ -2744,7 +2736,6 @@ export function QuotaDashboard({
     setData((current) => {
       const refreshedMap = new Map(records.map((record) => [record.endpointId, record]));
       const merged = current.records.map((record) => refreshedMap.get(record.endpointId) ?? record);
-      syncCookieAlerts(merged);
       return {
         ...current,
         generatedAt: generatedAt ?? new Date().toISOString(),
@@ -2761,7 +2752,6 @@ export function QuotaDashboard({
       throw new Error(body.message || '刷新后读取列表失败');
     }
     setData(body);
-    syncCookieAlerts(body.records);
   }, []);
 
   useEffect(() => {
@@ -3007,7 +2997,6 @@ export function QuotaDashboard({
       }
 
       updateSingleRecord(body.record, record);
-      setData((current) => { syncCookieAlerts(current.records); return current; });
       toast.success('刷新成功');
     } catch (err) {
       toast.error('刷新失败', err instanceof Error ? err.message : String(err));

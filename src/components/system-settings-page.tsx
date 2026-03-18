@@ -79,6 +79,7 @@ type SystemSettings = {
   dailyCheckinScheduleEnabled: boolean;
   dailyCheckinScheduleTimes: string[];
   dailyCheckinLastRunAt: string | null;
+  networkErrorAlertConsecutiveThreshold: number;
   balanceRefreshAnomalyThresholdPercent: number;
   balanceRefreshAnomalyVendorIds: number[];
   updatedAt: string | null;
@@ -95,6 +96,25 @@ type CleanupApiResponse = {
   message?: string;
   deletedEndpoints?: number;
   deletedVendors?: number;
+};
+
+type EndpointAlertType = "credential" | "parse_error" | "network_error";
+
+type EndpointAlertMuteRule = {
+  endpointId: number;
+  endpointName: string | null;
+  alertType: EndpointAlertType;
+  scope: "today" | "permanent";
+  expiresAt: string | null;
+};
+
+type EndpointAlertApiResponse = {
+  ok: boolean;
+  message?: string;
+  muteRules?: EndpointAlertMuteRule[];
+  settings?: {
+    networkErrorAlertConsecutiveThreshold: number;
+  };
 };
 
 type VendorOption = {
@@ -214,6 +234,20 @@ function parseSettingsPanel(raw: string | null | undefined): SettingsPanel {
     return "endpoint";
   }
   return "config";
+}
+
+function endpointAlertTypeLabel(alertType: EndpointAlertType): string {
+  if (alertType === "credential") {
+    return "凭据异常";
+  }
+  if (alertType === "parse_error") {
+    return "解析异常";
+  }
+  return "网络异常";
+}
+
+function endpointAlertMuteScopeLabel(rule: EndpointAlertMuteRule): string {
+  return rule.scope === "today" ? "今日静音" : "永久静音";
 }
 
 function intervalDisplayFromMinutes(totalMinutesRaw: number): {
@@ -647,9 +681,19 @@ export function SystemSettingsPage({
     setBalanceRefreshAnomalyThresholdDraft,
   ] = useState(String(initialSettings.balanceRefreshAnomalyThresholdPercent));
   const [
+    networkErrorAlertConsecutiveThresholdDraft,
+    setNetworkErrorAlertConsecutiveThresholdDraft,
+  ] = useState(String(initialSettings.networkErrorAlertConsecutiveThreshold));
+  const [
     balanceRefreshAnomalyVendorIdsDraft,
     setBalanceRefreshAnomalyVendorIdsDraft,
   ] = useState<number[]>(initialSettings.balanceRefreshAnomalyVendorIds);
+  const [endpointAlertMuteRules, setEndpointAlertMuteRules] = useState<
+    EndpointAlertMuteRule[]
+  >([]);
+  const [endpointAlertMuteRulesLoading, setEndpointAlertMuteRulesLoading] =
+    useState(false);
+  const [mutingActionKey, setMutingActionKey] = useState<string | null>(null);
   const [dailyCheckinHourDraft, setDailyCheckinHourDraft] = useState("09");
   const [dailyCheckinMinuteDraft, setDailyCheckinMinuteDraft] = useState("00");
   const [balanceRefreshAnomalyDialogOpen, setBalanceRefreshAnomalyDialogOpen] =
@@ -700,6 +744,65 @@ export function SystemSettingsPage({
     vendorId: null,
     position: null,
   });
+
+  const loadEndpointAlertMuteRules = useCallback(async () => {
+    setEndpointAlertMuteRulesLoading(true);
+    try {
+      const response = await fetch(withBasePath("/api/endpoint-alerts"), {
+        cache: "no-store",
+      });
+      const body = (await response.json()) as EndpointAlertApiResponse;
+      if (!response.ok || !body.ok) {
+        throw new Error(body.message || "读取静音规则失败");
+      }
+      setEndpointAlertMuteRules(body.muteRules ?? []);
+    } catch (error) {
+      toast.error(
+        "读取静音规则失败",
+        error instanceof Error ? error.message : String(error),
+      );
+    } finally {
+      setEndpointAlertMuteRulesLoading(false);
+    }
+  }, []);
+
+  const handleCancelEndpointAlertMute = useCallback(
+    async (rule: EndpointAlertMuteRule) => {
+      const actionKey = `${rule.endpointId}:${rule.alertType}`;
+      setMutingActionKey(actionKey);
+      try {
+        const response = await fetch(withBasePath("/api/endpoint-alerts"), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            action: "unmute",
+            endpointId: rule.endpointId,
+            alertType: rule.alertType,
+          }),
+        });
+        const body = (await response.json()) as EndpointAlertApiResponse;
+        if (!response.ok || !body.ok) {
+          throw new Error(body.message || "取消静音失败");
+        }
+        setEndpointAlertMuteRules(body.muteRules ?? []);
+        toast.success("已取消静音");
+      } catch (error) {
+        toast.error(
+          "取消静音失败",
+          error instanceof Error ? error.message : String(error),
+        );
+      } finally {
+        setMutingActionKey(null);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    void loadEndpointAlertMuteRules();
+  }, [loadEndpointAlertMuteRules]);
 
   const pushTasksPreview = useMemo<PushTaskConfig[]>(
     () =>
@@ -1625,6 +1728,9 @@ export function SystemSettingsPage({
           autoCleanupAfterRefreshEnabled: autoCleanupAfterRefreshEnabledDraft,
           dailyCheckinScheduleEnabled: dailyCheckinEnabledDraft,
           dailyCheckinScheduleTimes: dailyCheckinTimesDraft,
+          networkErrorAlertConsecutiveThreshold: Number(
+            networkErrorAlertConsecutiveThresholdDraft,
+          ),
           balanceRefreshAnomalyThresholdPercent: Number(
             balanceRefreshAnomalyThresholdDraft,
           ),
@@ -1656,6 +1762,9 @@ export function SystemSettingsPage({
       }
       setDailyCheckinEnabledDraft(body.settings.dailyCheckinScheduleEnabled);
       setDailyCheckinTimesDraft(body.settings.dailyCheckinScheduleTimes);
+      setNetworkErrorAlertConsecutiveThresholdDraft(
+        String(body.settings.networkErrorAlertConsecutiveThreshold),
+      );
       setBalanceRefreshAnomalyThresholdDraft(
         String(body.settings.balanceRefreshAnomalyThresholdPercent),
       );
@@ -2163,6 +2272,136 @@ export function SystemSettingsPage({
                         }
                         className="h-10 w-full rounded-xl border border-border/60 bg-background px-4 text-sm font-bold font-mono outline-none transition-all focus:border-violet-500/40 focus:ring-4 focus:ring-violet-500/10 shadow-sm"
                       />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-4 rounded-2xl border border-border/40 bg-muted/10 p-5 shadow-sm">
+                    <div className="grid md:grid-cols-[1fr,320px] gap-6 items-start">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2">
+                          <div className="h-4 w-1 rounded-full bg-rose-500" />
+                          <label
+                            htmlFor="network-error-alert-threshold"
+                            className="text-sm font-bold text-foreground tracking-tight"
+                          >
+                            网络异常连续告警阈值
+                          </label>
+                        </div>
+                        <p className="text-[11px] font-medium text-muted-foreground leading-relaxed pl-3 border-l border-border/60 ml-0.5 max-w-none">
+                          端点连续命中网络错误达到该次数后，才会升级到右上角异常弹窗。中间只要出现一次非网络错误结果，就重新计数。
+                        </p>
+                      </div>
+
+                      <input
+                        id="network-error-alert-threshold"
+                        type="number"
+                        min={1}
+                        max={1000}
+                        step={1}
+                        value={networkErrorAlertConsecutiveThresholdDraft}
+                        onChange={(event) =>
+                          setNetworkErrorAlertConsecutiveThresholdDraft(
+                            event.target.value,
+                          )
+                        }
+                        className="h-10 w-full rounded-xl border border-border/60 bg-background px-4 text-sm font-bold font-mono outline-none transition-all focus:border-rose-500/40 focus:ring-4 focus:ring-rose-500/10 shadow-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-4 rounded-2xl border border-border/40 bg-muted/10 p-5 shadow-sm">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2">
+                          <div className="h-4 w-1 rounded-full bg-amber-500" />
+                          <span className="text-sm font-bold text-foreground tracking-tight">
+                            异常提醒静音管理
+                          </span>
+                        </div>
+                        <p className="text-[11px] font-medium text-muted-foreground leading-relaxed pl-3 border-l border-border/60 ml-0.5 max-w-none">
+                          管理已设置为“今日静音 / 永久静音”的端点异常提醒。单次确认不会出现在这里。
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => void loadEndpointAlertMuteRules()}
+                        disabled={endpointAlertMuteRulesLoading}
+                        className="rounded-lg"
+                      >
+                        {endpointAlertMuteRulesLoading ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            刷新中
+                          </>
+                        ) : (
+                          <>
+                            <RefreshCw className="mr-2 h-4 w-4" />
+                            刷新静音列表
+                          </>
+                        )}
+                      </Button>
+                    </div>
+
+                    <div className="overflow-hidden rounded-xl border border-border/40 bg-background/70 shadow-inner">
+                      {endpointAlertMuteRulesLoading && endpointAlertMuteRules.length === 0 ? (
+                        <div className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          加载静音规则...
+                        </div>
+                      ) : endpointAlertMuteRules.length === 0 ? (
+                        <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                          当前没有已静音的端点异常提醒。
+                        </div>
+                      ) : (
+                        <div className="divide-y divide-border/40">
+                          {endpointAlertMuteRules.map((rule) => {
+                            const actionKey = `${rule.endpointId}:${rule.alertType}`;
+                            return (
+                              <div
+                                key={`${rule.endpointId}:${rule.alertType}`}
+                                className="flex flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between"
+                              >
+                                <div className="space-y-1">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="text-sm font-semibold text-foreground">
+                                      #{rule.endpointId} {rule.endpointName ?? "未知端点"}
+                                    </span>
+                                    <span className="rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-bold text-muted-foreground">
+                                      {endpointAlertTypeLabel(rule.alertType)}
+                                    </span>
+                                    <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-600">
+                                      {endpointAlertMuteScopeLabel(rule)}
+                                    </span>
+                                  </div>
+                                  <div className="text-xs text-muted-foreground">
+                                    {rule.scope === "today"
+                                      ? `静音到：${formatDateTime(rule.expiresAt)}`
+                                      : "静音到：永久"}
+                                  </div>
+                                </div>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() =>
+                                    void handleCancelEndpointAlertMute(rule)
+                                  }
+                                  disabled={mutingActionKey === actionKey}
+                                  className="w-fit rounded-lg"
+                                >
+                                  {mutingActionKey === actionKey ? (
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <X className="mr-2 h-4 w-4" />
+                                  )}
+                                  取消静音
+                                </Button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -3463,6 +3702,9 @@ export function SystemSettingsPage({
                     );
                     setDailyCheckinTimesDraft(
                       settings.dailyCheckinScheduleTimes,
+                    );
+                    setNetworkErrorAlertConsecutiveThresholdDraft(
+                      String(settings.networkErrorAlertConsecutiveThreshold),
                     );
                     setBalanceRefreshAnomalyThresholdDraft(
                       String(settings.balanceRefreshAnomalyThresholdPercent),

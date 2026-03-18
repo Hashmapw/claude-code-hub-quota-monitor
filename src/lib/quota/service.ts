@@ -16,6 +16,7 @@ import { getVendorDefinition } from '@/lib/vendor-definitions';
 import { queryEndpointQuotaWithDebug, runVendorDailyCheckinWithDebug } from '@/lib/quota/adapters';
 import { getCachedResult, getCachedResults, setCachedResult } from '@/lib/quota/cache';
 import { getCachedDebugSnapshot, setCachedDebugSnapshot } from '@/lib/quota/debug-cache';
+import { recordEndpointAlertRefresh } from '@/lib/endpoint-alerts';
 import {
   getCachedVendorResult,
   getCachedVendorResults,
@@ -742,6 +743,7 @@ export async function refreshEndpointQuota(endpointId: number): Promise<QuotaRec
   };
 
   await cacheQueryOutput(provider.id, mergedOutput);
+  await recordEndpointAlertRefresh(provider.id, previousResult, mergedOutput.result);
 
   if (endpointOutput) {
     logQuotaDebugProbes('refresh.vendor_probe', refreshContext, endpointOutput.debugProbes);
@@ -817,6 +819,7 @@ async function refreshProvidersWithContext(
     };
 
     await cacheQueryOutput(provider.id, mergedOutput);
+    await recordEndpointAlertRefresh(provider.id, previousResult, mergedOutput.result);
 
     const refreshContext = buildRefreshContext(provider, setting, endpointMap, sourceScope);
     if (endpointOutput && probeOwnerEndpointIds.has(provider.id)) {

@@ -14,6 +14,7 @@ type UpdatePayload = {
   autoCleanupAfterRefreshEnabled?: boolean | null;
   dailyCheckinScheduleEnabled?: boolean | null;
   dailyCheckinScheduleTimes?: string[] | null;
+  networkErrorAlertConsecutiveThreshold?: number | string | null;
   balanceRefreshAnomalyThresholdPercent?: number | string | null;
   balanceRefreshAnomalyVendorIds?: number[] | null;
 };
@@ -53,6 +54,7 @@ export async function PUT(request: Request): Promise<Response> {
       autoCleanupAfterRefreshEnabled: body.autoCleanupAfterRefreshEnabled,
       dailyCheckinScheduleEnabled: body.dailyCheckinScheduleEnabled,
       dailyCheckinScheduleTimes: body.dailyCheckinScheduleTimes,
+      networkErrorAlertConsecutiveThreshold: body.networkErrorAlertConsecutiveThreshold,
       balanceRefreshAnomalyThresholdPercent: body.balanceRefreshAnomalyThresholdPercent,
       balanceRefreshAnomalyVendorIds: body.balanceRefreshAnomalyVendorIds,
     });
